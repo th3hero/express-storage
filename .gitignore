@@ -121,7 +121,6 @@ dist
 
 # TernJS port file
 .tern-port
-
 # Stores VSCode versions used for testing VSCode extensions
 .vscode-test
 
@@ -137,3 +136,4 @@ dist
 # Vite logs files
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
+
