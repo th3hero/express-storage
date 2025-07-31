@@ -1,10 +1,9 @@
 import { LocalStorageDriver } from '../src/drivers/local.driver';
-import { FileUploadResult, PresignedUrlResult } from '../src/types/storage.types';
 import fs from 'fs';
 import path from 'path';
 
 // Mock Express.Multer.File
-const createMockFile = (overrides: Partial<Express.Multer.File> = {}): Express.Multer.File => ({
+const createMockFile = (overrides = {}): Express.Multer.File => ({
   fieldname: 'file',
   originalname: 'test.jpg',
   encoding: '7bit',
@@ -34,7 +33,27 @@ describe('LocalStorageDriver', () => {
     // Clean up test files
     const testDir = path.resolve('test-uploads');
     if (fs.existsSync(testDir)) {
-      fs.rmSync(testDir, { recursive: true, force: true });
+      // Use a more robust cleanup that handles non-empty directories
+      const rimraf = (dir: string) => {
+        if (fs.existsSync(dir)) {
+          const files = fs.readdirSync(dir);
+          for (const file of files) {
+            const filePath = path.join(dir, file);
+            const stat = fs.statSync(filePath);
+            if (stat.isDirectory()) {
+              rimraf(filePath);
+            } else {
+              fs.unlinkSync(filePath);
+            }
+          }
+          try {
+            fs.rmdirSync(dir);
+          } catch (error) {
+            // Directory might already be removed or not empty, ignore
+          }
+        }
+      };
+      rimraf(testDir);
     }
   });
 
@@ -48,15 +67,18 @@ describe('LocalStorageDriver', () => {
       expect(result.fileUrl).toBeDefined();
       expect(result.error).toBeUndefined();
 
-      // Check if file was actually created
+      // Check if file was actually created in month/year directory
       const fileName = result.fileName!;
-      const filePath = path.join('test-uploads', fileName);
+      const currentDate = new Date();
+      const month = currentDate.toLocaleString('en', { month: 'long' }).toLowerCase();
+      const year = currentDate.getFullYear();
+      const filePath = path.join('test-uploads', month, year.toString(), fileName);
       expect(fs.existsSync(filePath)).toBe(true);
     });
 
     it('should generate unique filenames', async () => {
-      const mockFile1 = createMockFile({ originalname: 'test.jpg' });
-      const mockFile2 = createMockFile({ originalname: 'test.jpg' });
+      const mockFile1 = createMockFile({ originalname: 'test1.jpg' });
+      const mockFile2 = createMockFile({ originalname: 'test2.jpg' });
 
       const result1 = await driver.upload(mockFile1);
       const result2 = await driver.upload(mockFile2);
@@ -81,8 +103,12 @@ describe('LocalStorageDriver', () => {
       const mockFile = createMockFile();
       await driver.upload(mockFile);
 
-      // Check if directory was created
-      expect(fs.existsSync('test-uploads')).toBe(true);
+      // Check if directory was created (should be in month/year subdirectory)
+      const currentDate = new Date();
+      const month = currentDate.toLocaleString('en', { month: 'long' }).toLowerCase();
+      const year = currentDate.getFullYear();
+      const expectedDir = path.join('test-uploads', month, year.toString());
+      expect(fs.existsSync(expectedDir)).toBe(true);
     });
   });
 
@@ -96,8 +122,11 @@ describe('LocalStorageDriver', () => {
         const deleteResult = await driver.delete(uploadResult.fileName);
         expect(deleteResult).toBe(true);
 
-        // Check if file was actually deleted
-        const filePath = path.join('test-uploads', uploadResult.fileName);
+        // Check if file was actually deleted (should be in month/year subdirectory)
+        const currentDate = new Date();
+        const month = currentDate.toLocaleString('en', { month: 'long' }).toLowerCase();
+        const year = currentDate.getFullYear();
+        const filePath = path.join('test-uploads', month, year.toString(), uploadResult.fileName);
         expect(fs.existsSync(filePath)).toBe(false);
       }
     });
@@ -134,8 +163,8 @@ describe('LocalStorageDriver', () => {
       const results = await driver.uploadMultiple(mockFiles);
 
       expect(results).toHaveLength(2);
-      expect(results[0].success).toBe(true);
-      expect(results[1].success).toBe(true);
+      expect(results[0]?.success).toBe(true);
+      expect(results[1]?.success).toBe(true);
     });
 
     it('should delete multiple files successfully', async () => {

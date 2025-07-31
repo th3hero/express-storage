@@ -1,8 +1,24 @@
 import { StorageManager } from '../src/storage-manager';
-import { FileUploadResult, PresignedUrlResult } from '../src/types/storage.types';
+import { FileUploadResult } from '../src/types/storage.types';
+
+// Mock AWS SDK to avoid tslib dependency issues in tests
+jest.mock('@aws-sdk/client-s3', () => ({
+  S3Client: jest.fn(),
+  PutObjectCommand: jest.fn(),
+  DeleteObjectCommand: jest.fn(),
+  GetObjectCommand: jest.fn(),
+}));
+
+jest.mock('@aws-sdk/s3-request-presigner', () => ({
+  getSignedUrl: jest.fn(),
+}));
+
+jest.mock('@google-cloud/storage', () => ({
+  Storage: jest.fn(),
+}));
 
 // Mock Express.Multer.File
-const createMockFile = (overrides: Partial<Express.Multer.File> = {}): Express.Multer.File => ({
+const createMockFile = (overrides = {}): Express.Multer.File => ({
   fieldname: 'file',
   originalname: 'test.jpg',
   encoding: '7bit',
@@ -21,8 +37,8 @@ describe('StorageManager', () => {
 
   beforeEach(() => {
     // Reset environment variables for testing
-    process.env.FILE_DRIVER = 'local';
-    process.env.LOCAL_PATH = 'test-uploads';
+    process.env['FILE_DRIVER'] = 'local';
+    process.env['LOCAL_PATH'] = 'test-uploads';
     
     // Clear any cached instances
     StorageManager.clearCache();
@@ -88,8 +104,8 @@ describe('StorageManager', () => {
       const results = await storageManager.uploadFiles(mockFiles);
 
       expect(results).toHaveLength(2);
-      expect(results[0].success).toBe(true);
-      expect(results[1].success).toBe(true);
+      expect(results[0]?.success).toBe(true);
+      expect(results[1]?.success).toBe(true);
     });
 
     it('should handle file validation errors', async () => {
@@ -122,7 +138,7 @@ describe('StorageManager', () => {
       }) as FileUploadResult[];
 
       expect(multipleResults).toHaveLength(2);
-      expect(multipleResults[0].success).toBe(true);
+      expect(multipleResults[0]?.success).toBe(true);
     });
   });
 
@@ -209,7 +225,7 @@ describe('StorageManager', () => {
   describe('Error Handling', () => {
     it('should handle initialization errors gracefully', () => {
       // Set invalid environment variable
-      process.env.FILE_DRIVER = 'invalid';
+      process.env['FILE_DRIVER'] = 'invalid';
       
       expect(() => {
         new StorageManager();
