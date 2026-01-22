@@ -1,7 +1,7 @@
 import { S3Client, PutObjectCommand, DeleteObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { BaseStorageDriver } from './base.driver.js';
-import { FileUploadResult, PresignedUrlResult } from '../types/storage.types.js';
+import { FileUploadResult, PresignedUrlResult, StorageConfig } from '../types/storage.types.js';
 
 /**
  * AWS S3 storage driver
@@ -11,19 +11,28 @@ export class S3StorageDriver extends BaseStorageDriver {
   private bucketName: string;
   private region: string;
 
-  constructor(config: any) {
+  constructor(config: StorageConfig) {
     super(config);
     
     this.bucketName = config.bucketName!;
     this.region = config.awsRegion!;
     
-    this.s3Client = new S3Client({
+    // Build S3 client options
+    const s3Options: { region: string; credentials?: { accessKeyId: string; secretAccessKey: string } } = {
       region: this.region,
-      credentials: {
-        accessKeyId: config.awsAccessKey!,
-        secretAccessKey: config.awsSecretKey!,
-      },
-    });
+    };
+
+    // Only provide explicit credentials if access keys are provided
+    // When running on AWS (EC2, ECS, Lambda, etc.), IAM roles are used automatically
+    // via the default credential provider chain
+    if (config.awsAccessKey && config.awsSecretKey) {
+      s3Options.credentials = {
+        accessKeyId: config.awsAccessKey,
+        secretAccessKey: config.awsSecretKey,
+      };
+    }
+    
+    this.s3Client = new S3Client(s3Options);
   }
 
   /**
@@ -65,13 +74,16 @@ export class S3StorageDriver extends BaseStorageDriver {
 
   /**
    * Generate presigned upload URL
+   * @param fileName - Name of the file
+   * @param contentType - Optional MIME type constraint
+   * @param _maxSize - Optional max file size (S3 doesn't support size limits in presigned URLs)
    */
-  async generateUploadUrl(fileName: string): Promise<PresignedUrlResult> {
+  async generateUploadUrl(fileName: string, contentType?: string, _maxSize?: number): Promise<PresignedUrlResult> {
     try {
       const uploadCommand = new PutObjectCommand({
         Bucket: this.bucketName,
         Key: fileName,
-        ContentType: 'application/octet-stream',
+        ContentType: contentType || 'application/octet-stream',
       });
 
       const uploadUrl = await getSignedUrl(this.s3Client, uploadCommand, {
@@ -120,7 +132,7 @@ export class S3StorageDriver extends BaseStorageDriver {
 
       await this.s3Client.send(deleteCommand);
       return true;
-    } catch (error) {
+    } catch {
       return false;
     }
   }
@@ -130,7 +142,7 @@ export class S3StorageDriver extends BaseStorageDriver {
  * AWS S3 presigned storage driver
  */
 export class S3PresignedStorageDriver extends S3StorageDriver {
-  constructor(config: any) {
+  constructor(config: StorageConfig) {
     super(config);
   }
 
@@ -162,4 +174,4 @@ export class S3PresignedStorageDriver extends S3StorageDriver {
       );
     }
   }
-} 
+}

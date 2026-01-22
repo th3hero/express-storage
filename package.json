@@ -1,7 +1,7 @@
 {
   "name": "express-storage",
   "version": "1.0.0",
-  "description": "A simple and powerful file upload and storage management package for Express.js applications. Supports multiple storage drivers including S3, GCS, OCI, and local storage with presigned URL support.",
+  "description": "A simple and powerful file upload and storage management package for Express.js applications. Supports multiple storage drivers including AWS S3, Google Cloud Storage, Azure Blob Storage, and local storage with presigned URL support.",
   "homepage": "https://github.com/th3hero/express-storage#readme",
   "bugs": {
     "url": "https://github.com/th3hero/express-storage/issues"
@@ -32,7 +32,8 @@
     "storage",
     "s3",
     "gcs",
-    "oci",
+    "azure",
+    "blob-storage",
     "presigned-url",
     "typescript",
     "multer",
@@ -43,9 +44,6 @@
     "dev": "tsc --watch",
     "clean": "rm -rf dist",
     "prepublishOnly": "npm run clean && npm run build",
-    "test": "jest",
-    "test:watch": "jest --watch",
-    "test:coverage": "jest --coverage",
     "lint": "eslint src --ext .ts",
     "lint:fix": "eslint src --ext .ts --fix",
     "format": "prettier --write src/**/*.ts",
@@ -59,24 +57,21 @@
   },
   "devDependencies": {
     "@types/express": "^5.0.3",
-    "@types/jest": "^30.0.0",
     "@types/multer": "^2.0.0",
     "@types/node": "^24.1.0",
     "@typescript-eslint/eslint-plugin": "^8.38.0",
     "@typescript-eslint/parser": "^8.38.0",
     "eslint": "^9.32.0",
-    "jest": "^30.0.5",
     "prettier": "^3.6.2",
-    "ts-jest": "^29.4.0",
     "typescript": "^5.8.3"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.856.0",
     "@aws-sdk/s3-request-presigner": "^3.856.0",
+    "@azure/storage-blob": "^12.26.0",
     "@google-cloud/storage": "^7.16.0",
     "dotenv": "^17.2.1",
     "multer": "^2.0.2",
-    "oci-sdk": "^2.114.0",
     "tslib": "^2.8.1"
   }
 }

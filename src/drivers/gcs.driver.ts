@@ -1,6 +1,6 @@
 import { Storage, Bucket } from '@google-cloud/storage';
 import { BaseStorageDriver } from './base.driver.js';
-import { FileUploadResult, PresignedUrlResult } from '../types/storage.types.js';
+import { FileUploadResult, PresignedUrlResult, StorageConfig } from '../types/storage.types.js';
 
 /**
  * Google Cloud Storage driver
@@ -11,17 +11,22 @@ export class GCSStorageDriver extends BaseStorageDriver {
   private bucketName: string;
   private projectId: string;
 
-  constructor(config: any) {
+  constructor(config: StorageConfig) {
     super(config);
     
     this.bucketName = config.bucketName!;
     this.projectId = config.gcsProjectId!;
     
     // Initialize GCS client
-    this.storage = new Storage({
+    const storageOptions: { projectId: string; keyFilename?: string } = {
       projectId: this.projectId,
-      keyFilename: config.gcsCredentials,
-    });
+    };
+    
+    if (config.gcsCredentials) {
+      storageOptions.keyFilename = config.gcsCredentials;
+    }
+    
+    this.storage = new Storage(storageOptions);
     
     this.bucket = this.storage.bucket(this.bucketName);
   }
@@ -63,17 +68,33 @@ export class GCSStorageDriver extends BaseStorageDriver {
 
   /**
    * Generate presigned upload URL
+   * @param fileName - The name of the file to upload
+   * @param contentType - Optional content type constraint
+   * @param _maxSize - Optional max file size (GCS doesn't support size limits in signed URLs)
    */
-  async generateUploadUrl(fileName: string): Promise<PresignedUrlResult> {
+  async generateUploadUrl(fileName: string, contentType?: string, _maxSize?: number): Promise<PresignedUrlResult> {
     try {
       const gcsFile = this.bucket.file(fileName);
       
-      const [uploadUrl] = await gcsFile.getSignedUrl({
+      // Build signed URL options
+      const options: {
+        version: 'v4';
+        action: 'write';
+        expires: number;
+        contentType?: string;
+      } = {
         version: 'v4',
         action: 'write',
         expires: Date.now() + (this.getPresignedUrlExpiry() * 1000),
-        contentType: 'application/octet-stream',
-      });
+      };
+
+      // Only include contentType if specified - this makes the URL work with any content type
+      // when contentType is not specified in the signature
+      if (contentType) {
+        options.contentType = contentType;
+      }
+      
+      const [uploadUrl] = await gcsFile.getSignedUrl(options);
 
       return this.createPresignedSuccessResult(uploadUrl);
     } catch (error) {
@@ -112,7 +133,7 @@ export class GCSStorageDriver extends BaseStorageDriver {
       const gcsFile = this.bucket.file(fileName);
       await gcsFile.delete();
       return true;
-    } catch (error) {
+    } catch {
       return false;
     }
   }
@@ -122,7 +143,7 @@ export class GCSStorageDriver extends BaseStorageDriver {
  * Google Cloud Storage presigned driver
  */
 export class GCSPresignedStorageDriver extends GCSStorageDriver {
-  constructor(config: any) {
+  constructor(config: StorageConfig) {
     super(config);
   }
 
@@ -154,4 +175,4 @@ export class GCSPresignedStorageDriver extends GCSStorageDriver {
       );
     }
   }
-} 
+}

@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { BaseStorageDriver } from './base.driver.js';
-import { FileUploadResult, PresignedUrlResult } from '../types/storage.types.js';
+import { FileUploadResult, PresignedUrlResult, StorageConfig } from '../types/storage.types.js';
 import { createMonthBasedPath, ensureDirectoryExists, createLocalFileUrl } from '../utils/file.utils.js';
 
 /**
@@ -10,7 +10,7 @@ import { createMonthBasedPath, ensureDirectoryExists, createLocalFileUrl } from 
 export class LocalStorageDriver extends BaseStorageDriver {
   private basePath: string;
 
-  constructor(config: any) {
+  constructor(config: StorageConfig) {
     super(config);
     this.basePath = config.localPath || 'public/express-storage';
   }
@@ -57,7 +57,7 @@ export class LocalStorageDriver extends BaseStorageDriver {
   /**
    * Generate upload URL (not supported for local storage)
    */
-  async generateUploadUrl(_fileName: string): Promise<PresignedUrlResult> {
+  async generateUploadUrl(_fileName: string, _contentType?: string, _maxSize?: number): Promise<PresignedUrlResult> {
     return this.createPresignedErrorResult(
       'Presigned URLs are not supported for local storage'
     );
@@ -87,7 +87,7 @@ export class LocalStorageDriver extends BaseStorageDriver {
       // Delete file
       fs.unlinkSync(filePath);
       return true;
-    } catch (error) {
+    } catch {
       return false;
     }
   }
@@ -124,6 +124,4 @@ export class LocalStorageDriver extends BaseStorageDriver {
     
     return searchDirectories(baseDir);
   }
-
-
-} 
+}

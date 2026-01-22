@@ -20,9 +20,11 @@ const ENV_KEYS = {
   GCS_PROJECT_ID: 'GCS_PROJECT_ID',
   GCS_CREDENTIALS: 'GCS_CREDENTIALS',
   
-  // Oracle Cloud Infrastructure
-  OCI_REGION: 'OCI_REGION',
-  OCI_CREDENTIALS: 'OCI_CREDENTIALS',
+  // Azure Blob Storage
+  AZURE_CONNECTION_STRING: 'AZURE_CONNECTION_STRING',
+  AZURE_ACCOUNT_NAME: 'AZURE_ACCOUNT_NAME',
+  AZURE_ACCOUNT_KEY: 'AZURE_ACCOUNT_KEY',
+  AZURE_CONTAINER_NAME: 'AZURE_CONTAINER_NAME',
 } as const;
 
 // Default configuration
@@ -50,9 +52,11 @@ export function loadEnvironmentConfig(): EnvironmentConfig {
     GCS_PROJECT_ID: process.env[ENV_KEYS.GCS_PROJECT_ID] || undefined,
     GCS_CREDENTIALS: process.env[ENV_KEYS.GCS_CREDENTIALS] || undefined,
     
-    // Oracle Cloud Infrastructure
-    OCI_REGION: process.env[ENV_KEYS.OCI_REGION] || undefined,
-    OCI_CREDENTIALS: process.env[ENV_KEYS.OCI_CREDENTIALS] || undefined,
+    // Azure Blob Storage
+    AZURE_CONNECTION_STRING: process.env[ENV_KEYS.AZURE_CONNECTION_STRING] || undefined,
+    AZURE_ACCOUNT_NAME: process.env[ENV_KEYS.AZURE_ACCOUNT_NAME] || undefined,
+    AZURE_ACCOUNT_KEY: process.env[ENV_KEYS.AZURE_ACCOUNT_KEY] || undefined,
+    AZURE_CONTAINER_NAME: process.env[ENV_KEYS.AZURE_CONTAINER_NAME] || undefined,
   };
 }
 
@@ -61,7 +65,7 @@ export function loadEnvironmentConfig(): EnvironmentConfig {
  */
 export function environmentToStorageConfig(envConfig: EnvironmentConfig): StorageConfig {
   const config: StorageConfig = {
-    driver: envConfig.FILE_DRIVER as any,
+    driver: envConfig.FILE_DRIVER as StorageConfig['driver'],
     bucketName: envConfig.BUCKET_NAME,
     localPath: envConfig.LOCAL_PATH || DEFAULT_CONFIG.localPath,
     presignedUrlExpiry: envConfig.PRESIGNED_URL_EXPIRY 
@@ -77,9 +81,11 @@ export function environmentToStorageConfig(envConfig: EnvironmentConfig): Storag
     gcsProjectId: envConfig.GCS_PROJECT_ID,
     gcsCredentials: envConfig.GCS_CREDENTIALS,
     
-    // Oracle Cloud Infrastructure
-    ociRegion: envConfig.OCI_REGION,
-    ociCredentials: envConfig.OCI_CREDENTIALS,
+    // Azure Blob Storage
+    azureConnectionString: envConfig.AZURE_CONNECTION_STRING,
+    azureAccountName: envConfig.AZURE_ACCOUNT_NAME,
+    azureAccountKey: envConfig.AZURE_ACCOUNT_KEY,
+    azureContainerName: envConfig.AZURE_CONTAINER_NAME,
   };
 
   return config;
@@ -94,28 +100,36 @@ export function validateStorageConfig(config: StorageConfig): ValidationResult {
   // Validate driver
   if (!config.driver) {
     errors.push('FILE_DRIVER is required');
-  } else if (!['s3', 's3-presigned', 'gcs', 'gcs-presigned', 'oci', 'oci-presigned', 'local'].includes(config.driver)) {
-    errors.push(`Invalid FILE_DRIVER: ${config.driver}. Must be one of: s3, s3-presigned, gcs, gcs-presigned, oci, oci-presigned, local`);
+  } else if (!['s3', 's3-presigned', 'gcs', 'gcs-presigned', 'azure', 'azure-presigned', 'local'].includes(config.driver)) {
+    errors.push(`Invalid FILE_DRIVER: ${config.driver}. Must be one of: s3, s3-presigned, gcs, gcs-presigned, azure, azure-presigned, local`);
   }
 
   // Validate cloud storage requirements
   if (config.driver?.includes('s3')) {
     if (!config.bucketName) errors.push('BUCKET_NAME is required for S3');
     if (!config.awsRegion) errors.push('AWS_REGION is required for S3');
-    if (!config.awsAccessKey) errors.push('AWS_ACCESS_KEY is required for S3');
-    if (!config.awsSecretKey) errors.push('AWS_SECRET_KEY is required for S3');
+    // AWS_ACCESS_KEY and AWS_SECRET_KEY are optional - when not provided, the SDK uses
+    // the default credential provider chain (IAM roles, environment variables, shared credentials, etc.)
   }
 
   if (config.driver?.includes('gcs')) {
     if (!config.bucketName) errors.push('BUCKET_NAME is required for GCS');
     if (!config.gcsProjectId) errors.push('GCS_PROJECT_ID is required for GCS');
-    if (!config.gcsCredentials) errors.push('GCS_CREDENTIALS is required for GCS');
+    // GCS_CREDENTIALS is optional - when not provided, Application Default Credentials (ADC) will be used
   }
 
-  if (config.driver?.includes('oci')) {
-    if (!config.bucketName) errors.push('BUCKET_NAME is required for OCI');
-    if (!config.ociRegion) errors.push('OCI_REGION is required for OCI');
-    if (!config.ociCredentials) errors.push('OCI_CREDENTIALS is required for OCI');
+  if (config.driver?.includes('azure')) {
+    // Azure requires either connection string OR account name + key
+    const hasConnectionString = !!config.azureConnectionString;
+    const hasAccountCredentials = config.azureAccountName && config.azureAccountKey;
+    
+    if (!hasConnectionString && !hasAccountCredentials) {
+      errors.push('Azure requires either AZURE_CONNECTION_STRING or both AZURE_ACCOUNT_NAME and AZURE_ACCOUNT_KEY');
+    }
+    // Container name can use BUCKET_NAME or AZURE_CONTAINER_NAME
+    if (!config.azureContainerName && !config.bucketName) {
+      errors.push('AZURE_CONTAINER_NAME or BUCKET_NAME is required for Azure');
+    }
   }
 
   // Validate presigned URL expiry
@@ -138,4 +152,4 @@ export function loadAndValidateConfig(): { config: StorageConfig; validation: Va
   const validation = validateStorageConfig(config);
 
   return { config, validation };
-} 
+}

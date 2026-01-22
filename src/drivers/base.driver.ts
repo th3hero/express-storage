@@ -39,8 +39,11 @@ export abstract class BaseStorageDriver implements IStorageDriver {
 
   /**
    * Generate upload URL (for presigned drivers)
+   * @param fileName - Name of the file
+   * @param contentType - Optional MIME type constraint
+   * @param maxSize - Optional max file size in bytes
    */
-  abstract generateUploadUrl(fileName: string): Promise<PresignedUrlResult>;
+  abstract generateUploadUrl(fileName: string, contentType?: string, maxSize?: number): Promise<PresignedUrlResult>;
 
   /**
    * Generate view URL (for presigned drivers)
@@ -104,7 +107,7 @@ export abstract class BaseStorageDriver implements IStorageDriver {
       try {
         const result = await this.delete(fileName);
         results.push(result);
-      } catch (error) {
+      } catch {
         results.push(false);
       }
     }
@@ -201,4 +204,4 @@ export abstract class BaseStorageDriver implements IStorageDriver {
   protected getPresignedUrlExpiry(): number {
     return this.config.presignedUrlExpiry || 600; // Default 10 minutes
   }
-} 
+}
