@@ -2,7 +2,7 @@ import { StorageConfig, IStorageDriver } from '../types/storage.types.js';
 import { LocalStorageDriver } from '../drivers/local.driver.js';
 import { S3StorageDriver, S3PresignedStorageDriver } from '../drivers/s3.driver.js';
 import { GCSStorageDriver, GCSPresignedStorageDriver } from '../drivers/gcs.driver.js';
-import { OCIStorageDriver, OCIPresignedStorageDriver } from '../drivers/oci.driver.js';
+import { AzureStorageDriver, AzurePresignedStorageDriver } from '../drivers/azure.driver.js';
 
 /**
  * Factory class for creating storage drivers
@@ -37,70 +37,21 @@ export class StorageDriverFactory {
     switch (config.driver) {
       case 'local':
         return new LocalStorageDriver(config);
-        
       case 's3':
-        return this.createS3Driver(config);
-        
+        return new S3StorageDriver(config);
       case 's3-presigned':
-        return this.createS3PresignedDriver(config);
-        
+        return new S3PresignedStorageDriver(config);
       case 'gcs':
-        return this.createGCSDriver(config);
-        
+        return new GCSStorageDriver(config);
       case 'gcs-presigned':
-        return this.createGCSPresignedDriver(config);
-        
-      case 'oci':
-        return this.createOCIDriver(config);
-        
-      case 'oci-presigned':
-        return this.createOCIPresignedDriver(config);
-        
+        return new GCSPresignedStorageDriver(config);
+      case 'azure':
+        return new AzureStorageDriver(config);
+      case 'azure-presigned':
+        return new AzurePresignedStorageDriver(config);
       default:
         throw new Error(`Unsupported storage driver: ${config.driver}`);
     }
-  }
-
-  /**
-   * Create S3 driver
-   */
-  private static createS3Driver(config: StorageConfig): IStorageDriver {
-    return new S3StorageDriver(config);
-  }
-
-  /**
-   * Create S3 presigned driver
-   */
-  private static createS3PresignedDriver(config: StorageConfig): IStorageDriver {
-    return new S3PresignedStorageDriver(config);
-  }
-
-  /**
-   * Create GCS driver
-   */
-  private static createGCSDriver(config: StorageConfig): IStorageDriver {
-    return new GCSStorageDriver(config);
-  }
-
-  /**
-   * Create GCS presigned driver
-   */
-  private static createGCSPresignedDriver(config: StorageConfig): IStorageDriver {
-    return new GCSPresignedStorageDriver(config);
-  }
-
-  /**
-   * Create OCI driver
-   */
-  private static createOCIDriver(config: StorageConfig): IStorageDriver {
-    return new OCIStorageDriver(config);
-  }
-
-  /**
-   * Create OCI presigned driver
-   */
-  private static createOCIPresignedDriver(config: StorageConfig): IStorageDriver {
-    return new OCIPresignedStorageDriver(config);
   }
 
   /**
@@ -134,8 +85,8 @@ export class StorageDriverFactory {
       's3-presigned',
       'gcs',
       'gcs-presigned',
-      'oci',
-      'oci-presigned'
+      'azure',
+      'azure-presigned'
     ];
   }
-} 
+}

@@ -119,12 +119,16 @@ app.post('/upload-multiple', upload.array('files', 10), async (req, res) => {
 
 ### AWS S3 Configuration
 - `AWS_REGION`: AWS region (e.g., `us-east-1`)
-- `AWS_ACCESS_KEY`: AWS access key ID
-- `AWS_SECRET_KEY`: AWS secret access key
+- `AWS_ACCESS_KEY`: AWS access key ID (optional on AWS - see below)
+- `AWS_SECRET_KEY`: AWS secret access key (optional on AWS - see below)
+
+> **💡 Running on AWS?** When deployed on AWS (EC2, ECS, Lambda, EKS, etc.), you can omit `AWS_ACCESS_KEY` and `AWS_SECRET_KEY`. The SDK will automatically use [IAM Role credentials](https://docs.aws.amazon.com/sdk-for-javascript/v3/developer-guide/setting-credentials-node.html) from the instance/task role.
 
 ### Google Cloud Storage Configuration
 - `GCS_PROJECT_ID`: Google Cloud project ID
-- `GCS_CREDENTIALS`: Path to service account JSON file
+- `GCS_CREDENTIALS`: Path to service account JSON file (optional on GCP - see below)
+
+> **💡 Running on GCP?** When deployed on GCP (Cloud Run, GKE, Compute Engine, Cloud Functions), you can omit `GCS_CREDENTIALS`. The SDK will automatically use [Application Default Credentials (ADC)](https://cloud.google.com/docs/authentication/application-default-credentials) from the attached service account.
 
 ### Oracle Cloud Infrastructure Configuration
 - `OCI_REGION`: OCI region (e.g., `us-ashburn-1`)
