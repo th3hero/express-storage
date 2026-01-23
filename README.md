@@ -5,14 +5,18 @@ A powerful, TypeScript-first file upload and storage management package for Expr
 ## 🚀 Features
 
 - **TypeScript First**: Fully written in TypeScript with complete type definitions
-- **Multiple Storage Drivers**: Support for AWS S3, Google Cloud Storage, Oracle Cloud Infrastructure, and local storage
+- **Multiple Storage Drivers**: Support for AWS S3, Google Cloud Storage, Azure Blob Storage, and local storage
 - **Presigned URLs**: Generate secure, time-limited URLs for direct client uploads
-- **Flexible File Handling**: Support for single and multiple file uploads
-- **Automatic File Organization**: Files stored in month/year directories for local storage
-- **Unique File Naming**: Unix timestamp-based unique filenames with sanitization
+- **File Validation**: Built-in size, type, and extension validation with enforcement
+- **Azure Post-Upload Validation**: Server-side validation for Azure (which doesn't support URL-level constraints)
+- **Flexible File Handling**: Support for single and multiple file uploads with parallel processing
+- **Custom Metadata**: Add custom metadata, cache-control, and content-disposition to uploads
+- **Automatic File Organization**: Files stored with unique timestamp-based names
 - **Environment-based Configuration**: Simple setup using environment variables
-- **Class-based API**: Clean, object-oriented interface with `StorageManager`
-- **Comprehensive Testing**: Full test coverage with Jest
+- **Configurable Limits**: Set max file size per instance
+- **Retry Support**: Built-in retry utility with exponential backoff
+- **List Files**: Query and paginate through stored files
+- **Logging Support**: Inject custom logger for debugging and monitoring
 - **Error Handling**: Consistent error responses with detailed messages
 
 ## 📦 Installation
@@ -35,14 +39,16 @@ FILE_DRIVER=local
 LOCAL_PATH=public/uploads
 
 # For cloud storage (AWS S3 example)
-FILE_DRIVER=s3
+FILE_DRIVER=s3-presigned
 BUCKET_NAME=my-bucket
+BUCKET_PATH=uploads          # Optional: default folder path
 AWS_REGION=us-east-1
 AWS_ACCESS_KEY=your-access-key
 AWS_SECRET_KEY=your-secret-key
 
-# Optional: Presigned URL expiry (default: 600 seconds / 10 minutes)
-PRESIGNED_URL_EXPIRY=600
+# Optional settings
+PRESIGNED_URL_EXPIRY=600     # URL expiry in seconds (default: 600)
+MAX_FILE_SIZE=5368709120     # Max file size in bytes (default: 5GB)
 ```
 
 ### 2. Basic Usage
@@ -60,363 +66,293 @@ const storage = new StorageManager();
 
 // Single file upload
 app.post('/upload', upload.single('file'), async (req, res) => {
-  try {
-    const result = await storage.uploadFile(req.file!);
-    
-    if (result.success) {
-      res.json({
-        success: true,
-        fileName: result.fileName,
-        fileUrl: result.fileUrl
-      });
-    } else {
-      res.status(400).json({ success: false, error: result.error });
-    }
-  } catch (error) {
-    res.status(500).json({ success: false, error: 'Upload failed' });
-  }
-});
-
-// Multiple files upload
-app.post('/upload-multiple', upload.array('files', 10), async (req, res) => {
-  try {
-    const results = await storage.uploadFiles(req.files as Express.Multer.File[]);
-    
-    const successful = results.filter(r => r.success);
-    const failed = results.filter(r => !r.success);
-    
+  const result = await storage.uploadFile(req.file!);
+  
+  if (result.success) {
     res.json({
       success: true,
-      uploaded: successful.length,
-      failed: failed.length,
-      results
+      fileName: result.fileName,
+      fileUrl: result.fileUrl
     });
-  } catch (error) {
-    res.status(500).json({ success: false, error: 'Upload failed' });
+  } else {
+    res.status(400).json({ success: false, error: result.error });
   }
 });
 ```
 
 ## 🗂️ Supported Storage Drivers
 
-| Driver | Type | Description | Required Environment Variables |
-|--------|------|-------------|-------------------------------|
-| `local` | Direct | Local file system storage | `LOCAL_PATH` (optional) |
-| `s3` | Direct | AWS S3 direct upload | `BUCKET_NAME`, `AWS_REGION`, `AWS_ACCESS_KEY`, `AWS_SECRET_KEY` |
-| `s3-presigned` | Presigned | AWS S3 presigned URLs | `BUCKET_NAME`, `AWS_REGION`, `AWS_ACCESS_KEY`, `AWS_SECRET_KEY` |
-| `gcs` | Direct | Google Cloud Storage direct upload | `BUCKET_NAME`, `GCS_PROJECT_ID`, `GCS_CREDENTIALS` |
-| `gcs-presigned` | Presigned | Google Cloud Storage presigned URLs | `BUCKET_NAME`, `GCS_PROJECT_ID`, `GCS_CREDENTIALS` |
-| `oci` | Direct | Oracle Cloud Infrastructure direct upload | `BUCKET_NAME`, `OCI_REGION`, `OCI_CREDENTIALS` |
-| `oci-presigned` | Presigned | Oracle Cloud Infrastructure presigned URLs | `BUCKET_NAME`, `OCI_REGION`, `OCI_CREDENTIALS` |
+| Driver | Type | Description |
+|--------|------|-------------|
+| `local` | Direct | Local file system storage |
+| `s3` | Direct | AWS S3 direct upload |
+| `s3-presigned` | Presigned | AWS S3 presigned URLs |
+| `gcs` | Direct | Google Cloud Storage direct upload |
+| `gcs-presigned` | Presigned | Google Cloud Storage presigned URLs |
+| `azure` | Direct | Azure Blob Storage direct upload |
+| `azure-presigned` | Presigned | Azure Blob Storage presigned URLs |
 
 ## 📋 Environment Variables Reference
 
 ### Core Configuration
-- `FILE_DRIVER` (required): Storage driver to use
-- `BUCKET_NAME`: Cloud storage bucket name
-- `LOCAL_PATH`: Local storage directory path (default: `public/express-storage`)
-- `PRESIGNED_URL_EXPIRY`: Presigned URL expiry in seconds (default: 600)
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `FILE_DRIVER` | Storage driver to use | `local` |
+| `BUCKET_NAME` | Cloud storage bucket name | - |
+| `BUCKET_PATH` | Default folder path in bucket | `` (root) |
+| `LOCAL_PATH` | Local storage directory path | `public/express-storage` |
+| `PRESIGNED_URL_EXPIRY` | URL expiry in seconds | `600` |
+| `MAX_FILE_SIZE` | Maximum file size in bytes | `5368709120` (5GB) |
 
 ### AWS S3 Configuration
-- `AWS_REGION`: AWS region (e.g., `us-east-1`)
-- `AWS_ACCESS_KEY`: AWS access key ID (optional on AWS - see below)
-- `AWS_SECRET_KEY`: AWS secret access key (optional on AWS - see below)
-
-> **💡 Running on AWS?** When deployed on AWS (EC2, ECS, Lambda, EKS, etc.), you can omit `AWS_ACCESS_KEY` and `AWS_SECRET_KEY`. The SDK will automatically use [IAM Role credentials](https://docs.aws.amazon.com/sdk-for-javascript/v3/developer-guide/setting-credentials-node.html) from the instance/task role.
+| Variable | Description |
+|----------|-------------|
+| `AWS_REGION` | AWS region (e.g., `us-east-1`) |
+| `AWS_ACCESS_KEY` | AWS access key ID (optional on AWS with IAM) |
+| `AWS_SECRET_KEY` | AWS secret access key (optional on AWS with IAM) |
 
 ### Google Cloud Storage Configuration
-- `GCS_PROJECT_ID`: Google Cloud project ID
-- `GCS_CREDENTIALS`: Path to service account JSON file (optional on GCP - see below)
+| Variable | Description |
+|----------|-------------|
+| `GCS_PROJECT_ID` | Google Cloud project ID |
+| `GCS_CREDENTIALS` | Path to service account JSON file (optional on GCP with ADC) |
 
-> **💡 Running on GCP?** When deployed on GCP (Cloud Run, GKE, Compute Engine, Cloud Functions), you can omit `GCS_CREDENTIALS`. The SDK will automatically use [Application Default Credentials (ADC)](https://cloud.google.com/docs/authentication/application-default-credentials) from the attached service account.
+### Azure Blob Storage Configuration
+| Variable | Description |
+|----------|-------------|
+| `AZURE_CONNECTION_STRING` | Connection string (recommended) |
+| `AZURE_ACCOUNT_NAME` | Account name (alternative) |
+| `AZURE_ACCOUNT_KEY` | Account key (alternative) |
+| `AZURE_CONTAINER_NAME` | Container name (uses BUCKET_NAME if not set) |
 
-### Oracle Cloud Infrastructure Configuration
-- `OCI_REGION`: OCI region (e.g., `us-ashburn-1`)
-- `OCI_CREDENTIALS`: Path to OCI credentials file
+## 🔐 Presigned URLs
+
+Presigned URLs allow secure, direct client-to-cloud uploads without exposing credentials.
+
+### Validation Behavior by Provider
+
+| Provider | Content-Type | File Size | Post-Upload Validation |
+|----------|--------------|-----------|------------------------|
+| **S3** | ✅ Enforced | ✅ Enforced | Optional |
+| **GCS** | ✅ Enforced | ✅ Enforced | Optional |
+| **Azure** | ❌ Not enforced | ❌ Not enforced | **Required** |
+
+### Presigned URL Flow
+
+```typescript
+// 1. Generate upload URL
+const result = await storage.generateUploadUrl(
+  'photo.jpg',           // Original filename
+  'image/jpeg',          // Content type
+  12345,                 // Exact file size in bytes
+  'users/123/uploads'    // Optional folder (overrides BUCKET_PATH)
+);
+
+// Response includes:
+// {
+//   success: true,
+//   fileName: '1769107318637_abc123_photo.jpg',  // Unique filename
+//   filePath: 'users/123/uploads',               // Folder path
+//   reference: 'users/123/uploads/1769107318637_abc123_photo.jpg',  // Full path for view/delete
+//   uploadUrl: 'https://...',                    // Presigned upload URL
+//   requiresValidation: true,                    // True for Azure
+//   expiresIn: 600
+// }
+
+// 2. Client uploads directly to uploadUrl
+
+// 3. Confirm and validate upload
+const confirmResult = await storage.validateAndConfirmUpload(
+  result.reference,
+  {
+    expectedContentType: 'image/jpeg',  // Required for Azure
+    expectedFileSize: 12345             // Required for Azure
+  }
+);
+
+// For Azure: validates blob properties and deletes if mismatch
+// For S3/GCS: verifies file exists and returns metadata
+```
 
 ## 🔌 API Reference
 
 ### StorageManager Class
 
-The main class for managing file storage operations.
-
 #### Constructor
 ```typescript
-const storage = new StorageManager();
+const storage = new StorageManager({
+  driver: 's3-presigned',
+  credentials: {
+    bucketName: 'my-bucket',
+    bucketPath: 'uploads',
+    awsRegion: 'us-east-1',
+    maxFileSize: 10 * 1024 * 1024, // 10MB
+  },
+  logger: console, // Optional: inject custom logger
+});
 ```
 
-#### Methods
+#### File Upload Methods
 
-##### File Upload
 ```typescript
-// Single file upload
-const result = await storage.uploadFile(file: Express.Multer.File): Promise<FileUploadResult>
+// Single file upload with validation and metadata
+const result = await storage.uploadFile(
+  file,
+  { maxSize: 5 * 1024 * 1024, allowedMimeTypes: ['image/jpeg'] },
+  { metadata: { uploadedBy: 'user123' }, cacheControl: 'max-age=31536000' }
+);
 
-// Multiple files upload
-const results = await storage.uploadFiles(files: Express.Multer.File[]): Promise<FileUploadResult[]>
+// Multiple files upload (parallel)
+const results = await storage.uploadFiles(files, validation, uploadOptions);
 
-// Generic upload (handles both single and multiple)
-const result = await storage.upload(input: FileInput): Promise<FileUploadResult | FileUploadResult[]>
+// Generic upload
+const result = await storage.upload(fileInput, validation, uploadOptions);
 ```
 
-##### Presigned URLs
+#### Presigned URL Methods
+
 ```typescript
 // Generate upload URL
-const result = await storage.generateUploadUrl(fileName: string): Promise<PresignedUrlResult>
+const result = await storage.generateUploadUrl(
+  fileName,
+  contentType,
+  fileSize,
+  folder  // Optional: overrides BUCKET_PATH
+);
 
 // Generate view URL
-const result = await storage.generateViewUrl(fileName: string): Promise<PresignedUrlResult>
+const result = await storage.generateViewUrl(reference);
 
-// Generate multiple upload URLs
-const results = await storage.generateUploadUrls(fileNames: string[]): Promise<PresignedUrlResult[]>
-
-// Generate multiple view URLs
-const results = await storage.generateViewUrls(fileNames: string[]): Promise<PresignedUrlResult[]>
-```
-
-##### File Deletion
-```typescript
-// Delete single file
-const success = await storage.deleteFile(fileName: string): Promise<boolean>
-
-// Delete multiple files
-const results = await storage.deleteFiles(fileNames: string[]): Promise<boolean[]>
-```
-
-##### Utility Methods
-```typescript
-// Get current configuration
-const config = storage.getConfig(): StorageConfig
-
-// Get driver type
-const driverType = storage.getDriverType(): string
-
-// Check if presigned URLs are supported
-const isSupported = storage.isPresignedSupported(): boolean
-```
-
-### Static Methods
-
-```typescript
-// Initialize with custom configuration
-const storage = StorageManager.initialize({
-  driver: 's3',
-  bucketName: 'my-bucket',
-  awsRegion: 'us-east-1'
+// Validate and confirm upload (required for Azure)
+const result = await storage.validateAndConfirmUpload(reference, {
+  expectedContentType: 'image/jpeg',
+  expectedFileSize: 12345,
 });
 
-// Get available drivers
-const drivers = StorageManager.getAvailableDrivers(): string[]
-
-// Clear driver cache
-StorageManager.clearCache(): void
+// Multiple URLs
+const results = await storage.generateUploadUrls(fileNames, folder);
+const results = await storage.generateViewUrls(references);
 ```
 
-### Convenience Functions
+#### File Management Methods
 
 ```typescript
-import { 
-  uploadFile, 
-  uploadFiles, 
-  generateUploadUrl, 
-  generateViewUrl,
-  deleteFile,
-  deleteFiles,
-  getStorageManager,
-  initializeStorageManager
-} from 'express-storage';
+// Delete file
+const success = await storage.deleteFile(reference);
 
-// Use default storage manager
-const result = await uploadFile(file);
-const results = await uploadFiles(files);
-const urlResult = await generateUploadUrl('filename.jpg');
-const success = await deleteFile('filename.jpg');
+// Delete multiple files (parallel)
+const results = await storage.deleteFiles(references);
 
-// Initialize custom storage manager
-const storage = initializeStorageManager({
-  driver: 'local',
-  localPath: 'uploads'
-});
+// List files with pagination
+const result = await storage.listFiles(
+  'uploads/',           // Optional prefix
+  100,                  // Max results (default: 1000)
+  continuationToken     // For pagination
+);
+// Returns: { success, files: [{ name, size, contentType, lastModified }], nextToken }
 ```
 
-## 📁 File Organization
-
-### Local Storage
-Files are organized in month/year directories:
-```
-public/express-storage/
-├── january/
-│   └── 2024/
-│       ├── 1703123456_image.jpg
-│       └── 1703123457_document.pdf
-├── february/
-│   └── 2024/
-│       └── 1705800000_video.mp4
-└── ...
-```
-
-### Cloud Storage
-Files are stored with unique timestamps:
-```
-bucket/
-├── 1703123456_image.jpg
-├── 1703123457_document.pdf
-└── 1705800000_video.mp4
-```
-
-## 🔐 Presigned URLs
-
-For cloud storage providers, you can generate presigned URLs for secure, direct client uploads:
+#### Utility Methods
 
 ```typescript
-// Generate upload URL for client-side upload
-const uploadResult = await storage.generateUploadUrl('my-file.jpg');
-if (uploadResult.success) {
-  // Client can use uploadResult.uploadUrl to upload directly
-  console.log(uploadResult.uploadUrl);
+storage.getConfig();                    // Get current configuration
+storage.getDriverType();                // Get driver type
+storage.isPresignedSupported();         // Check if presigned URLs supported
+storage.requiresPostUploadValidation(); // True for Azure
+StorageManager.getAvailableDrivers();   // List all drivers
+StorageManager.clearCache();            // Clear driver cache
+```
+
+### Upload Options
+
+```typescript
+interface UploadOptions {
+  contentType?: string;              // Override content type
+  metadata?: Record<string, string>; // Custom metadata
+  cacheControl?: string;             // Cache-Control header
+  contentDisposition?: string;       // Content-Disposition header
 }
 
-// Generate view URL for secure file access
-const viewResult = await storage.generateViewUrl('my-file.jpg');
-if (viewResult.success) {
-  // Client can use viewResult.viewUrl to view the file
-  console.log(viewResult.viewUrl);
-}
-```
-
-## 🛠️ Advanced Usage Examples
-
-### Custom Configuration
-
-```typescript
-import { StorageManager } from 'express-storage';
-
-// Initialize with custom config
-const storage = StorageManager.initialize({
-  driver: 's3',
-  bucketName: 'my-bucket',
-  awsRegion: 'us-east-1',
-  awsAccessKey: process.env.AWS_ACCESS_KEY,
-  awsSecretKey: process.env.AWS_SECRET_KEY,
-  presignedUrlExpiry: 1800 // 30 minutes
+// Example
+await storage.uploadFile(file, undefined, {
+  metadata: { 
+    uploadedBy: 'user123',
+    originalName: 'vacation-photo.jpg'
+  },
+  cacheControl: 'max-age=31536000, public',
+  contentDisposition: 'inline; filename="photo.jpg"'
 });
 ```
 
-### Error Handling
+### Retry Utility
 
 ```typescript
-app.post('/upload', upload.single('file'), async (req, res) => {
-  try {
-    const result = await storage.uploadFile(req.file!);
-    
-    if (result.success) {
-      res.json({
-        success: true,
-        fileName: result.fileName,
-        fileUrl: result.fileUrl
-      });
-    } else {
-      res.status(400).json({
-        success: false,
-        error: result.error
-      });
-    }
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error instanceof Error ? error.message : 'Unknown error'
-    });
+import { withRetry } from 'express-storage';
+
+// Retry cloud operations with exponential backoff
+const result = await withRetry(
+  () => storage.uploadFile(file),
+  {
+    maxRetries: 3,           // Default: 3
+    baseDelay: 1000,         // Default: 1000ms
+    maxDelay: 10000,         // Default: 10000ms
+    exponentialBackoff: true // Default: true
   }
-});
+);
 ```
 
-### File Validation
+### Custom Logger
 
 ```typescript
-app.post('/upload', upload.single('file'), async (req, res) => {
-  const file = req.file!;
-  
-  // Validate file size (5MB limit)
-  if (file.size > 5 * 1024 * 1024) {
-    return res.status(400).json({
-      success: false,
-      error: 'File size too large. Maximum 5MB allowed.'
-    });
-  }
-  
-  // Validate file type
-  const allowedTypes = ['image/jpeg', 'image/png', 'image/gif'];
-  if (!allowedTypes.includes(file.mimetype)) {
-    return res.status(400).json({
-      success: false,
-      error: 'Invalid file type. Only JPEG, PNG, and GIF allowed.'
-    });
-  }
-  
-  const result = await storage.uploadFile(file);
-  res.json(result);
+import { StorageManager, Logger } from 'express-storage';
+
+const customLogger: Logger = {
+  debug: (msg, ...args) => console.debug(`[Storage] ${msg}`, ...args),
+  info: (msg, ...args) => console.info(`[Storage] ${msg}`, ...args),
+  warn: (msg, ...args) => console.warn(`[Storage] ${msg}`, ...args),
+  error: (msg, ...args) => console.error(`[Storage] ${msg}`, ...args),
+};
+
+const storage = new StorageManager({
+  driver: 's3-presigned',
+  logger: customLogger,
 });
 ```
 
-### Multiple File Upload with Progress
+## 📁 File Naming
 
-```typescript
-app.post('/upload-multiple', upload.array('files', 10), async (req, res) => {
-  const files = req.files as Express.Multer.File[];
-  const results = await storage.uploadFiles(files);
-  
-  const summary = {
-    total: files.length,
-    successful: results.filter(r => r.success).length,
-    failed: results.filter(r => !r.success).length,
-    files: results.map((result, index) => ({
-      originalName: files[index].originalname,
-      success: result.success,
-      fileName: result.fileName,
-      fileUrl: result.fileUrl,
-      error: result.error
-    }))
-  };
-  
-  res.json(summary);
-});
+Files are automatically renamed with a unique format to prevent collisions:
+
+```
+{timestamp}_{random}_{sanitized_name}.{extension}
 ```
 
-## 🧪 Testing
+Example: `1769104576000_a1b2c3_my_image.jpeg`
 
-Run the test suite:
+- **timestamp**: Unix timestamp in milliseconds
+- **random**: 6-character random string
+- **sanitized_name**: Original name with special characters replaced
+- **extension**: Lowercase file extension
 
-```bash
-# Run all tests
-npm test
+## 🔒 Security Best Practices
 
-# Run tests in watch mode
-npm run test:watch
-
-# Run tests with coverage
-npm run test:coverage
-```
+1. **Always validate on the server**: Even with presigned URL constraints, validate uploads
+2. **Use short expiry times**: Keep presigned URLs valid only as long as needed
+3. **Validate file types**: Use `allowedMimeTypes` and `allowedExtensions`
+4. **Set size limits**: Configure `maxFileSize` appropriately
+5. **For Azure**: Always use `validateAndConfirmUpload` with expected values
 
 ## 🛠️ Development
-
-### Prerequisites
-- Node.js >= 16.0.0
-- TypeScript >= 5.1.6
-
-### Development Commands
 
 ```bash
 # Install dependencies
 npm install
 
-# Build the package
+# Build
 npm run build
 
-# Development mode (watch for changes)
+# Development mode
 npm run dev
-
-# Clean build directory
-npm run clean
 
 # Type checking
 npm run type-check
@@ -424,70 +360,11 @@ npm run type-check
 # Linting
 npm run lint
 npm run lint:fix
-
-# Formatting
-npm run format
 ```
-
-### Project Structure
-
-```
-express-storage/
-├── src/
-│   ├── types/
-│   │   └── storage.types.ts      # Type definitions
-│   ├── utils/
-│   │   ├── config.utils.ts       # Configuration utilities
-│   │   └── file.utils.ts         # File operation utilities
-│   ├── drivers/
-│   │   ├── base.driver.ts        # Abstract base driver
-│   │   ├── local.driver.ts       # Local storage driver
-│   │   ├── s3.driver.ts          # AWS S3 driver
-│   │   ├── gcs.driver.ts         # Google Cloud Storage driver
-│   │   └── oci.driver.ts         # Oracle Cloud Infrastructure driver
-│   ├── factory/
-│   │   └── driver.factory.ts     # Driver factory
-│   ├── storage-manager.ts        # Main StorageManager class
-│   └── index.ts                  # Package entry point
-├── tests/                        # Test files
-├── examples/                     # Usage examples
-├── dist/                         # Compiled output
-└── package.json
-```
-
-## 🤝 Contributing
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
-
-### Development Guidelines
-
-- Follow TypeScript best practices
-- Write comprehensive tests for new features
-- Update documentation for API changes
-- Ensure all tests pass before submitting PR
 
 ## 📄 License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## 🆘 Support
-
-- **Issues**: Report bugs and feature requests on GitHub
-- **Documentation**: Check the examples folder for usage patterns
-- **Questions**: Open a GitHub discussion for questions
-
-## 🔄 Changelog
-
-### v1.0.0
-- Initial release
-- Support for local, S3, GCS, and OCI storage
-- Presigned URL generation
-- TypeScript-first implementation
-- Comprehensive test coverage
+MIT License - see [LICENSE](LICENSE) for details.
 
 ---
 

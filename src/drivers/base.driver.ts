@@ -1,4 +1,5 @@
-import { IStorageDriver, FileUploadResult, PresignedUrlResult, StorageConfig } from '../types/storage.types.js';
+import fs from 'fs';
+import { IStorageDriver, FileUploadResult, PresignedUrlResult, StorageConfig, BlobValidationOptions, BlobValidationResult, ListFilesResult, UploadOptions, FileMetadata, DeleteResult } from '../types/storage.types.js';
 import { generateUniqueFileName } from '../utils/file.utils.js';
 
 /**
@@ -12,38 +13,31 @@ export abstract class BaseStorageDriver implements IStorageDriver {
   }
 
   /**
-   * Upload a single file
+   * Upload a single file with optional metadata
    */
-  abstract upload(file: Express.Multer.File): Promise<FileUploadResult>;
+  abstract upload(file: Express.Multer.File, options?: UploadOptions): Promise<FileUploadResult>;
 
   /**
-   * Upload multiple files
+   * Upload multiple files in parallel with optional metadata
    */
-  async uploadMultiple(files: Express.Multer.File[]): Promise<FileUploadResult[]> {
-    const results: FileUploadResult[] = [];
-    
-    for (const file of files) {
-      try {
-        const result = await this.upload(file);
-        results.push(result);
-      } catch (error) {
-        results.push({
+  async uploadMultiple(files: Express.Multer.File[], options?: UploadOptions): Promise<FileUploadResult[]> {
+    return Promise.all(
+      files.map(file =>
+        this.upload(file, options).catch(error => ({
           success: false,
           error: error instanceof Error ? error.message : 'Upload failed',
-        });
-      }
-    }
-    
-    return results;
+        }))
+      )
+    );
   }
 
   /**
    * Generate upload URL (for presigned drivers)
-   * @param fileName - Name of the file
-   * @param contentType - Optional MIME type constraint
-   * @param maxSize - Optional max file size in bytes
+   * @param fileName - Name of the file (exact key/blob name)
+   * @param contentType - MIME type constraint (enforced in signature)
+   * @param fileSize - Exact file size in bytes (enforced in S3, informational for GCS/Azure)
    */
-  abstract generateUploadUrl(fileName: string, contentType?: string, maxSize?: number): Promise<PresignedUrlResult>;
+  abstract generateUploadUrl(fileName: string, contentType?: string, fileSize?: number): Promise<PresignedUrlResult>;
 
   /**
    * Generate view URL (for presigned drivers)
@@ -51,45 +45,31 @@ export abstract class BaseStorageDriver implements IStorageDriver {
   abstract generateViewUrl(fileName: string): Promise<PresignedUrlResult>;
 
   /**
-   * Generate multiple upload URLs
+   * Generate multiple upload URLs in parallel with optional constraints
    */
-  async generateMultipleUploadUrls(fileNames: string[]): Promise<PresignedUrlResult[]> {
-    const results: PresignedUrlResult[] = [];
-    
-    for (const fileName of fileNames) {
-      try {
-        const result = await this.generateUploadUrl(fileName);
-        results.push(result);
-      } catch (error) {
-        results.push({
+  async generateMultipleUploadUrls(files: FileMetadata[]): Promise<PresignedUrlResult[]> {
+    return Promise.all(
+      files.map(file =>
+        this.generateUploadUrl(file.fileName, file.contentType, file.fileSize).catch(error => ({
           success: false,
           error: error instanceof Error ? error.message : 'Failed to generate upload URL',
-        });
-      }
-    }
-    
-    return results;
+        }))
+      )
+    );
   }
 
   /**
-   * Generate multiple view URLs
+   * Generate multiple view URLs in parallel
    */
   async generateMultipleViewUrls(fileNames: string[]): Promise<PresignedUrlResult[]> {
-    const results: PresignedUrlResult[] = [];
-    
-    for (const fileName of fileNames) {
-      try {
-        const result = await this.generateViewUrl(fileName);
-        results.push(result);
-      } catch (error) {
-        results.push({
+    return Promise.all(
+      fileNames.map(fileName =>
+        this.generateViewUrl(fileName).catch(error => ({
           success: false,
           error: error instanceof Error ? error.message : 'Failed to generate view URL',
-        });
-      }
-    }
-    
-    return results;
+        }))
+      )
+    );
   }
 
   /**
@@ -98,21 +78,33 @@ export abstract class BaseStorageDriver implements IStorageDriver {
   abstract delete(fileName: string): Promise<boolean>;
 
   /**
-   * Delete multiple files
+   * List files with optional prefix and pagination
    */
-  async deleteMultiple(fileNames: string[]): Promise<boolean[]> {
-    const results: boolean[] = [];
-    
-    for (const fileName of fileNames) {
-      try {
-        const result = await this.delete(fileName);
-        results.push(result);
-      } catch {
-        results.push(false);
-      }
-    }
-    
-    return results;
+  abstract listFiles(prefix?: string, maxResults?: number, continuationToken?: string): Promise<ListFilesResult>;
+
+  /**
+   * Delete multiple files in parallel
+   * Returns detailed results including error messages for failed deletions
+   */
+  async deleteMultiple(fileNames: string[]): Promise<DeleteResult[]> {
+    return Promise.all(
+      fileNames.map(async (fileName) => {
+        try {
+          const success = await this.delete(fileName);
+          const result: DeleteResult = { success, fileName };
+          if (!success) {
+            result.error = 'File not found or already deleted';
+          }
+          return result;
+        } catch (error) {
+          return {
+            success: false,
+            fileName,
+            error: error instanceof Error ? error.message : 'Failed to delete file',
+          };
+        }
+      })
+    );
   }
 
   /**
@@ -174,6 +166,7 @@ export abstract class BaseStorageDriver implements IStorageDriver {
 
   /**
    * Validate file before upload
+   * Supports both memory storage (buffer) and disk storage (path)
    */
   protected validateFile(file: Express.Multer.File): string[] {
     const errors: string[] = [];
@@ -191,11 +184,33 @@ export abstract class BaseStorageDriver implements IStorageDriver {
       errors.push('File must have a MIME type');
     }
 
-    if (!file.buffer || file.buffer.length === 0) {
-      errors.push('File buffer is empty');
+    // Check for either buffer (memory storage) or path (disk storage)
+    const hasBuffer = file.buffer && file.buffer.length > 0;
+    const hasPath = typeof file.path === 'string' && file.path.length > 0;
+    
+    if (!hasBuffer && !hasPath) {
+      errors.push('File must have either buffer (memory storage) or path (disk storage)');
     }
 
     return errors;
+  }
+
+  /**
+   * Get file content from either buffer (memory storage) or disk (disk storage)
+   * Supports both Multer storage configurations
+   */
+  protected getFileContent(file: Express.Multer.File): Buffer {
+    // Prefer buffer if available (memory storage)
+    if (file.buffer && file.buffer.length > 0) {
+      return file.buffer;
+    }
+    
+    // Fall back to reading from disk (disk storage)
+    if (file.path) {
+      return fs.readFileSync(file.path);
+    }
+    
+    throw new Error('File has neither buffer nor path - cannot read content');
   }
 
   /**
@@ -203,5 +218,32 @@ export abstract class BaseStorageDriver implements IStorageDriver {
    */
   protected getPresignedUrlExpiry(): number {
     return this.config.presignedUrlExpiry || 600; // Default 10 minutes
+  }
+
+  /**
+   * Validate and confirm upload (for Azure post-upload validation)
+   * Default implementation just generates view URL (S3/GCS validate at URL level)
+   * Azure overrides this to check blob properties
+   */
+  async validateAndConfirmUpload(reference: string, _options?: BlobValidationOptions): Promise<BlobValidationResult> {
+    // Default: just verify file exists by generating view URL
+    const viewResult = await this.generateViewUrl(reference);
+    
+    if (viewResult.success) {
+      const result: BlobValidationResult = {
+        success: true,
+        reference,
+        expiresIn: this.getPresignedUrlExpiry(),
+      };
+      if (viewResult.viewUrl) {
+        result.viewUrl = viewResult.viewUrl;
+      }
+      return result;
+    }
+    
+    return {
+      success: false,
+      error: viewResult.error || 'File not found',
+    };
   }
 }

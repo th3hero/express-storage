@@ -69,13 +69,6 @@ export class StorageDriverFactory {
   }
 
   /**
-   * Get cached driver count
-   */
-  static getCachedDriverCount(): number {
-    return this.drivers.size;
-  }
-
-  /**
    * Get available drivers
    */
   static getAvailableDrivers(): string[] {

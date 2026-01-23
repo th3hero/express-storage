@@ -2,8 +2,8 @@
 export { StorageManager } from './storage-manager.js';
 export { StorageDriverFactory } from './factory/driver.factory.js';
 // Utility exports
-export { loadAndValidateConfig, validateStorageConfig } from './utils/config.utils.js';
-export { generateUniqueFileName, sanitizeFileName, createMonthBasedPath, ensureDirectoryExists, formatFileSize, validateFileSize, validateFileType, createLocalFileUrl, getFileExtension, isImageFile, isDocumentFile } from './utils/file.utils.js';
+export { loadAndValidateConfig, validateStorageConfig, initializeDotenv } from './utils/config.utils.js';
+export { generateUniqueFileName, sanitizeFileName, validateFileName, createMonthBasedPath, ensureDirectoryExists, formatFileSize, validateFileSize, validateFileType, createLocalFileUrl, getFileExtension, isImageFile, isDocumentFile, withRetry, sleep } from './utils/file.utils.js';
 // Driver exports
 export { BaseStorageDriver } from './drivers/base.driver.js';
 export { LocalStorageDriver } from './drivers/local.driver.js';

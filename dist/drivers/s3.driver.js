@@ -1,4 +1,4 @@
-import { S3Client, PutObjectCommand, DeleteObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3';
+import { S3Client, PutObjectCommand, DeleteObjectCommand, GetObjectCommand, HeadObjectCommand, ListObjectsV2Command } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { BaseStorageDriver } from './base.driver.js';
 /**
@@ -25,9 +25,9 @@ export class S3StorageDriver extends BaseStorageDriver {
         this.s3Client = new S3Client(s3Options);
     }
     /**
-     * Upload file to S3
+     * Upload file to S3 with optional metadata
      */
-    async upload(file) {
+    async upload(file, options) {
         try {
             // Validate file
             const validationErrors = this.validateFile(file);
@@ -36,14 +36,27 @@ export class S3StorageDriver extends BaseStorageDriver {
             }
             // Generate unique filename
             const fileName = this.generateFileName(file.originalname);
-            // Create S3 upload command
-            const uploadCommand = new PutObjectCommand({
+            // Get file content (supports both memory and disk storage)
+            const fileContent = this.getFileContent(file);
+            // Build upload command with options
+            const commandInput = {
                 Bucket: this.bucketName,
                 Key: fileName,
-                Body: file.buffer,
-                ContentType: file.mimetype,
+                Body: fileContent,
+                ContentType: options?.contentType || file.mimetype,
                 ContentLength: file.size,
-            });
+            };
+            // Add optional headers
+            if (options?.cacheControl) {
+                commandInput.CacheControl = options.cacheControl;
+            }
+            if (options?.contentDisposition) {
+                commandInput.ContentDisposition = options.contentDisposition;
+            }
+            if (options?.metadata) {
+                commandInput.Metadata = options.metadata;
+            }
+            const uploadCommand = new PutObjectCommand(commandInput);
             // Upload to S3
             await this.s3Client.send(uploadCommand);
             // Generate file URL
@@ -56,19 +69,28 @@ export class S3StorageDriver extends BaseStorageDriver {
     }
     /**
      * Generate presigned upload URL
-     * @param fileName - Name of the file
-     * @param contentType - Optional MIME type constraint
-     * @param _maxSize - Optional max file size (S3 doesn't support size limits in presigned URLs)
+     * @param fileName - Name of the file (will be the exact key in S3)
+     * @param contentType - MIME type constraint (defaults to 'application/octet-stream' if not provided)
+     * @param fileSize - Exact file size in bytes (enforced via ContentLength in signature)
      */
-    async generateUploadUrl(fileName, contentType, _maxSize) {
+    async generateUploadUrl(fileName, contentType, fileSize) {
         try {
-            const uploadCommand = new PutObjectCommand({
+            // Default to 'application/octet-stream' if contentType not provided
+            const resolvedContentType = contentType || 'application/octet-stream';
+            // Build PutObject command with constraints
+            const commandInput = {
                 Bucket: this.bucketName,
                 Key: fileName,
-                ContentType: contentType || 'application/octet-stream',
-            });
+                ContentType: resolvedContentType,
+            };
+            // Add ContentLength if fileSize provided - this enforces exact file size
+            if (fileSize) {
+                commandInput.ContentLength = fileSize;
+            }
+            const uploadCommand = new PutObjectCommand(commandInput);
             const uploadUrl = await getSignedUrl(this.s3Client, uploadCommand, {
                 expiresIn: this.getPresignedUrlExpiry(),
+                signableHeaders: new Set(['content-type', 'content-length']),
             });
             return this.createPresignedSuccessResult(uploadUrl);
         }
@@ -96,9 +118,23 @@ export class S3StorageDriver extends BaseStorageDriver {
     }
     /**
      * Delete file from S3
+     * First verifies file exists, then deletes it
      */
     async delete(fileName) {
         try {
+            // First check if file exists using HeadObject
+            const headCommand = new HeadObjectCommand({
+                Bucket: this.bucketName,
+                Key: fileName,
+            });
+            try {
+                await this.s3Client.send(headCommand);
+            }
+            catch {
+                // File doesn't exist
+                return false;
+            }
+            // File exists, proceed with deletion
             const deleteCommand = new DeleteObjectCommand({
                 Bucket: this.bucketName,
                 Key: fileName,
@@ -108,6 +144,78 @@ export class S3StorageDriver extends BaseStorageDriver {
         }
         catch {
             return false;
+        }
+    }
+    /**
+     * Validate and confirm upload - verifies file exists and returns metadata
+     */
+    async validateAndConfirmUpload(reference, _options) {
+        try {
+            // Verify file exists with HeadObject
+            const headCommand = new HeadObjectCommand({
+                Bucket: this.bucketName,
+                Key: reference,
+            });
+            const headResult = await this.s3Client.send(headCommand);
+            // Generate view URL
+            const viewResult = await this.generateViewUrl(reference);
+            const result = {
+                success: true,
+                reference,
+                expiresIn: this.getPresignedUrlExpiry(),
+            };
+            if (viewResult.viewUrl) {
+                result.viewUrl = viewResult.viewUrl;
+            }
+            if (headResult.ContentType) {
+                result.actualContentType = headResult.ContentType;
+            }
+            if (headResult.ContentLength !== undefined) {
+                result.actualFileSize = headResult.ContentLength;
+            }
+            return result;
+        }
+        catch {
+            return {
+                success: false,
+                error: 'File not found or access denied',
+            };
+        }
+    }
+    /**
+     * List files in S3 bucket with optional prefix and pagination
+     */
+    async listFiles(prefix, maxResults = 1000, continuationToken) {
+        try {
+            const command = new ListObjectsV2Command({
+                Bucket: this.bucketName,
+                Prefix: prefix,
+                MaxKeys: maxResults,
+                ContinuationToken: continuationToken,
+            });
+            const response = await this.s3Client.send(command);
+            const files = (response.Contents || []).map(item => {
+                const fileInfo = { name: item.Key || '' };
+                if (item.Size !== undefined)
+                    fileInfo.size = item.Size;
+                if (item.LastModified)
+                    fileInfo.lastModified = item.LastModified;
+                return fileInfo;
+            });
+            const result = {
+                success: true,
+                files,
+            };
+            if (response.NextContinuationToken) {
+                result.nextToken = response.NextContinuationToken;
+            }
+            return result;
+        }
+        catch (error) {
+            return {
+                success: false,
+                error: error instanceof Error ? error.message : 'Failed to list files',
+            };
         }
     }
 }
@@ -120,6 +228,7 @@ export class S3PresignedStorageDriver extends S3StorageDriver {
     }
     /**
      * Override upload to return presigned URL instead of direct upload
+     * Includes content type and file size constraints for validation
      */
     async upload(file) {
         try {
@@ -130,8 +239,10 @@ export class S3PresignedStorageDriver extends S3StorageDriver {
             }
             // Generate unique filename
             const fileName = this.generateFileName(file.originalname);
-            // Generate presigned upload URL
-            const presignedResult = await this.generateUploadUrl(fileName);
+            // Generate presigned upload URL with constraints
+            const presignedResult = await this.generateUploadUrl(fileName, file.mimetype, // Pass content type for enforcement
+            file.size // Pass file size for enforcement
+            );
             if (!presignedResult.success) {
                 return this.createErrorResult(presignedResult.error || 'Failed to generate presigned URL');
             }

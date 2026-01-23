@@ -1,25 +1,12 @@
-# Express Storage Examples
+# Express Storage - Example
 
-This folder contains working examples for each storage driver.
+A unified example that works with **all storage drivers** based on your environment configuration.
 
-## 📁 Structure
-
-```
-examples/
-├── local/           # Local disk storage
-├── s3/              # AWS S3 direct upload
-├── s3-presigned/    # AWS S3 presigned URLs
-├── gcs/             # Google Cloud Storage direct upload
-├── gcs-presigned/   # Google Cloud Storage presigned URLs
-├── oci/             # Oracle Cloud Infrastructure (placeholder)
-└── oci-presigned/   # OCI presigned URLs (placeholder)
-```
-
-## 🚀 Running Examples
+## 🚀 Quick Start
 
 ### 1. Install Dependencies
 
-From the root of the project:
+From the project root:
 
 ```bash
 npm install
@@ -28,147 +15,139 @@ npm run build
 
 ### 2. Configure Environment
 
-Copy the `env.example` file in the example folder you want to run:
-
 ```bash
-# For local storage
-cp examples/local/env.example .env
+# Copy example env file
+cp examples/env.example examples/.env
 
-# For S3
-cp examples/s3/env.example .env
+# Edit with your configuration
+nano examples/.env
 ```
-
-Edit the `.env` file with your credentials.
 
 ### 3. Run the Example
 
 ```bash
-# Using ts-node (recommended for development)
-npx ts-node --esm examples/local/index.ts
+# Using tsx (recommended)
+npx tsx examples/index.ts
 
-# Or using tsx
-npx tsx examples/s3/index.ts
+# Or using ts-node
+npx ts-node --esm examples/index.ts
 ```
 
-## 📋 Examples Overview
+## 🔧 Configuration
 
-### Local Storage (`examples/local/`)
+Set `FILE_DRIVER` in your `.env` to switch between storage backends:
 
-- **Port:** 3000
-- **Use case:** Development, local file storage
-- **Features:** 
-  - Single/multiple file upload
-  - Automatic month/year directory organization
-  - File deletion
+| Driver | Description |
+|--------|-------------|
+| `local` | Local disk storage |
+| `s3` | AWS S3 direct upload |
+| `s3-presigned` | AWS S3 with presigned URLs |
+| `gcs` | Google Cloud Storage direct upload |
+| `gcs-presigned` | GCS with presigned URLs |
+| `azure` | Azure Blob Storage direct upload |
+| `azure-presigned` | Azure with SAS URLs |
 
-### S3 Direct Upload (`examples/s3/`)
+## 📋 API Endpoints
 
-- **Port:** 3001
-- **Use case:** Server-side upload to S3
-- **Features:**
-  - Direct upload from server to S3
-  - Generate view URLs
-  - File deletion
-
-### S3 Presigned URLs (`examples/s3-presigned/`)
-
-- **Port:** 3002
-- **Use case:** Client-side direct upload to S3
-- **Features:**
-  - Generate presigned upload URLs
-  - Generate presigned view URLs
-  - Upload confirmation endpoint
-  - Batch URL generation
-
-### GCS Direct Upload (`examples/gcs/`)
-
-- **Port:** 3003
-- **Use case:** Server-side upload to Google Cloud Storage
-- **Features:**
-  - Direct upload from server to GCS
-  - Generate view URLs
-  - File deletion
-
-### GCS Presigned URLs (`examples/gcs-presigned/`)
-
-- **Port:** 3004
-- **Use case:** Client-side direct upload to GCS
-- **Features:**
-  - Generate presigned upload URLs
-  - Generate presigned view URLs
-  - Upload confirmation endpoint
-
-### OCI Object Storage (`examples/oci/`)
-
-- **Port:** 3005
-- **Status:** ⚠️ Placeholder implementation
-- **Use case:** Server-side upload to OCI
-
-### OCI Presigned URLs (`examples/oci-presigned/`)
-
-- **Port:** 3006
-- **Status:** ⚠️ Placeholder implementation
-- **Use case:** Client-side direct upload to OCI
-
-## 🧪 Testing with cURL
-
-### Upload a file (Local/S3/GCS)
+### Direct Upload (All Drivers)
 
 ```bash
-curl -X POST -F "file=@./test.jpg" http://localhost:3000/upload
-```
+# Upload single file
+curl -X POST -F "file=@./image.jpg" http://localhost:3000/upload
 
-### Upload multiple files
-
-```bash
+# Upload multiple files
 curl -X POST \
   -F "files=@./image1.jpg" \
   -F "files=@./image2.jpg" \
   http://localhost:3000/upload-multiple
 ```
 
-### Get presigned upload URL (S3/GCS presigned)
+### Presigned URLs (Cloud Drivers with `-presigned`)
 
 ```bash
-curl -X POST \
-  -H "Content-Type: application/json" \
-  -d '{"fileName": "my-image.jpg"}' \
-  http://localhost:3002/presigned/upload
+# Step 1: Get presigned upload URL
+curl -X POST -H "Content-Type: application/json" \
+  -d '{"fileName":"photo.jpg","contentType":"image/jpeg","fileSize":12345}' \
+  http://localhost:3000/presigned/init
+
+# Step 2: Upload directly to cloud (use uploadUrl from response)
+curl -X PUT -H "Content-Type: image/jpeg" \
+  -H "Content-Length: 12345" \
+  --data-binary @./photo.jpg \
+  "PRESIGNED_UPLOAD_URL"
+
+# Step 3: Confirm upload
+curl -X POST -H "Content-Type: application/json" \
+  -d '{"fileName":"1234567890_photo.jpg"}' \
+  http://localhost:3000/presigned/confirm
+
+# Get view URL for existing file
+curl -X POST -H "Content-Type: application/json" \
+  -d '{"fileName":"1234567890_photo.jpg"}' \
+  http://localhost:3000/presigned/view
 ```
 
-### Upload to presigned URL
+### Common Endpoints
 
 ```bash
-curl -X PUT \
-  -H "Content-Type: image/jpeg" \
-  --data-binary @./test.jpg \
-  "PRESIGNED_URL_HERE"
-```
+# Delete file
+curl -X DELETE http://localhost:3000/files/1234567890_image.jpg
 
-### Delete a file
-
-```bash
-curl -X DELETE http://localhost:3000/files/1234567890_test.jpg
-```
-
-### Get storage info
-
-```bash
+# Get storage info
 curl http://localhost:3000/storage/info
+
+# Health check
+curl http://localhost:3000/health
 ```
 
-## 🔧 Environment Variables
+## 🔄 Presigned URL Flow
 
-| Variable | Description | Required For |
-|----------|-------------|--------------|
-| `FILE_DRIVER` | Storage driver type | All |
-| `BUCKET_NAME` | Cloud bucket name | S3, GCS, OCI |
-| `LOCAL_PATH` | Local storage path | Local |
-| `AWS_REGION` | AWS region | S3 |
-| `AWS_ACCESS_KEY` | AWS access key | S3 |
-| `AWS_SECRET_KEY` | AWS secret key | S3 |
-| `GCS_PROJECT_ID` | GCS project ID | GCS |
-| `GCS_CREDENTIALS` | Path to GCS credentials | GCS |
-| `OCI_REGION` | OCI region | OCI |
-| `OCI_CREDENTIALS` | Path to OCI credentials | OCI |
-| `PRESIGNED_URL_EXPIRY` | URL expiry in seconds | All (optional) |
+```
+┌──────────┐                    ┌──────────┐                    ┌─────────────┐
+│ Frontend │                    │ Backend  │                    │    Cloud    │
+└────┬─────┘                    └────┬─────┘                    └──────┬──────┘
+     │                               │                                 │
+     │ 1. Analyze file               │                                 │
+     │    (name, type, size)         │                                 │
+     │                               │                                 │
+     │ 2. POST /presigned/init       │                                 │
+     │    {fileName, contentType,    │                                 │
+     │     fileSize}                 │                                 │
+     │──────────────────────────────>│                                 │
+     │                               │                                 │
+     │                               │ 3. generateUploadUrl()          │
+     │                               │    (enforces name/type/size)    │
+     │                               │                                 │
+     │ 4. {uploadUrl, fileName}      │                                 │
+     │<──────────────────────────────│                                 │
+     │                               │                                 │
+     │ 5. PUT uploadUrl              │                                 │
+     │    (file binary)              │                                 │
+     │─────────────────────────────────────────────────────────────────>│
+     │                               │                                 │
+     │ 6. POST /presigned/confirm    │                                 │
+     │    {fileName}                 │                                 │
+     │──────────────────────────────>│                                 │
+     │                               │                                 │
+     │                               │ 7. generateViewUrl()            │
+     │                               │    (verify file exists)         │
+     │                               │<────────────────────────────────>│
+     │                               │                                 │
+     │ 8. {viewUrl, success}         │                                 │
+     │<──────────────────────────────│                                 │
+     │                               │                                 │
+```
+
+## 🔐 File Size Enforcement
+
+When using presigned URLs with `fileSize`, the upload is restricted:
+
+| Provider | Enforcement |
+|----------|-------------|
+| **S3** | ✅ Exact size enforced via `Content-Length` |
+| **GCS** | ✅ Exact size enforced via `x-goog-content-length-range` |
+| **Azure** | ❌ Size not enforced (informational only) |
+
+## 📁 Environment Variables
+
+See `env.example` for all available configuration options.
