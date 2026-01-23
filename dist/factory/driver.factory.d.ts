@@ -21,10 +21,6 @@ export declare class StorageDriverFactory {
      */
     static clearCache(): void;
     /**
-     * Get cached driver count
-     */
-    static getCachedDriverCount(): number;
-    /**
      * Get available drivers
      */
     static getAvailableDrivers(): string[];

@@ -6,24 +6,33 @@ export { StorageDriverFactory } from './factory/driver.factory.js';
 export type {
   StorageDriver,
   FileUploadResult,
+  DeleteResult,
   PresignedUrlResult,
   StorageConfig,
   StorageOptions,
   StorageCredentials,
   FileValidationOptions,
+  UploadOptions,
+  FileMetadata,
   FileInput,
   SingleFileInput,
   MultipleFilesInput,
   IStorageDriver,
   ValidationResult,
-  EnvironmentConfig
+  EnvironmentConfig,
+  BlobValidationOptions,
+  BlobValidationResult,
+  ListFilesResult,
+  FileInfo,
+  Logger
 } from './types/storage.types.js';
 
 // Utility exports
-export { loadAndValidateConfig, validateStorageConfig } from './utils/config.utils.js';
+export { loadAndValidateConfig, validateStorageConfig, initializeDotenv } from './utils/config.utils.js';
 export {
   generateUniqueFileName,
   sanitizeFileName,
+  validateFileName,
   createMonthBasedPath,
   ensureDirectoryExists,
   formatFileSize,
@@ -32,8 +41,11 @@ export {
   createLocalFileUrl,
   getFileExtension,
   isImageFile,
-  isDocumentFile
+  isDocumentFile,
+  withRetry,
+  sleep
 } from './utils/file.utils.js';
+export type { RetryOptions } from './utils/file.utils.js';
 
 // Driver exports
 export { BaseStorageDriver } from './drivers/base.driver.js';

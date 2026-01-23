@@ -1,12 +1,24 @@
 import dotenv from 'dotenv';
-// Load environment variables
-dotenv.config();
+// Track if dotenv has been initialized
+let dotenvInitialized = false;
+/**
+ * Initialize dotenv if not already done
+ * Call this before loading environment config if needed
+ */
+export function initializeDotenv() {
+    if (!dotenvInitialized) {
+        dotenv.config();
+        dotenvInitialized = true;
+    }
+}
 // Environment variable keys
 const ENV_KEYS = {
     FILE_DRIVER: 'FILE_DRIVER',
     BUCKET_NAME: 'BUCKET_NAME',
+    BUCKET_PATH: 'BUCKET_PATH',
     LOCAL_PATH: 'LOCAL_PATH',
     PRESIGNED_URL_EXPIRY: 'PRESIGNED_URL_EXPIRY',
+    MAX_FILE_SIZE: 'MAX_FILE_SIZE',
     // AWS S3
     AWS_REGION: 'AWS_REGION',
     AWS_ACCESS_KEY: 'AWS_ACCESS_KEY',
@@ -27,13 +39,18 @@ const DEFAULT_CONFIG = {
 };
 /**
  * Load environment configuration
+ * Automatically initializes dotenv on first call
  */
 export function loadEnvironmentConfig() {
+    // Initialize dotenv lazily on first use
+    initializeDotenv();
     return {
         FILE_DRIVER: process.env[ENV_KEYS.FILE_DRIVER] || '',
         BUCKET_NAME: process.env[ENV_KEYS.BUCKET_NAME] || undefined,
+        BUCKET_PATH: process.env[ENV_KEYS.BUCKET_PATH] || undefined,
         LOCAL_PATH: process.env[ENV_KEYS.LOCAL_PATH] || undefined,
         PRESIGNED_URL_EXPIRY: process.env[ENV_KEYS.PRESIGNED_URL_EXPIRY] || undefined,
+        MAX_FILE_SIZE: process.env[ENV_KEYS.MAX_FILE_SIZE] || undefined,
         // AWS S3
         AWS_REGION: process.env[ENV_KEYS.AWS_REGION] || undefined,
         AWS_ACCESS_KEY: process.env[ENV_KEYS.AWS_ACCESS_KEY] || undefined,
@@ -55,10 +72,14 @@ export function environmentToStorageConfig(envConfig) {
     const config = {
         driver: envConfig.FILE_DRIVER,
         bucketName: envConfig.BUCKET_NAME,
+        bucketPath: envConfig.BUCKET_PATH || '',
         localPath: envConfig.LOCAL_PATH || DEFAULT_CONFIG.localPath,
         presignedUrlExpiry: envConfig.PRESIGNED_URL_EXPIRY
             ? parseInt(envConfig.PRESIGNED_URL_EXPIRY, 10)
             : DEFAULT_CONFIG.presignedUrlExpiry,
+        maxFileSize: envConfig.MAX_FILE_SIZE
+            ? parseInt(envConfig.MAX_FILE_SIZE, 10)
+            : undefined,
         // AWS S3
         awsRegion: envConfig.AWS_REGION,
         awsAccessKey: envConfig.AWS_ACCESS_KEY,
@@ -103,11 +124,20 @@ export function validateStorageConfig(config) {
         // GCS_CREDENTIALS is optional - when not provided, Application Default Credentials (ADC) will be used
     }
     if (config.driver?.includes('azure')) {
-        // Azure requires either connection string OR account name + key
         const hasConnectionString = !!config.azureConnectionString;
-        const hasAccountCredentials = config.azureAccountName && config.azureAccountKey;
-        if (!hasConnectionString && !hasAccountCredentials) {
-            errors.push('Azure requires either AZURE_CONNECTION_STRING or both AZURE_ACCOUNT_NAME and AZURE_ACCOUNT_KEY');
+        const hasAccountKey = config.azureAccountName && config.azureAccountKey;
+        const hasManagedIdentity = config.azureAccountName && !config.azureAccountKey;
+        if (config.driver === 'azure-presigned') {
+            // Presigned driver requires account key for SAS URL generation
+            if (!hasConnectionString && !hasAccountKey) {
+                errors.push('Azure presigned driver requires either AZURE_CONNECTION_STRING or both AZURE_ACCOUNT_NAME and AZURE_ACCOUNT_KEY (Managed Identity cannot generate SAS URLs)');
+            }
+        }
+        else {
+            // Regular azure driver supports: connection string, account key, OR managed identity
+            if (!hasConnectionString && !hasAccountKey && !hasManagedIdentity) {
+                errors.push('Azure requires AZURE_CONNECTION_STRING, AZURE_ACCOUNT_NAME + AZURE_ACCOUNT_KEY, or AZURE_ACCOUNT_NAME only (for Managed Identity)');
+            }
         }
         // Container name can use BUCKET_NAME or AZURE_CONTAINER_NAME
         if (!config.azureContainerName && !config.bucketName) {
@@ -115,8 +145,22 @@ export function validateStorageConfig(config) {
         }
     }
     // Validate presigned URL expiry
-    if (config.presignedUrlExpiry && config.presignedUrlExpiry <= 0) {
-        errors.push('PRESIGNED_URL_EXPIRY must be greater than 0');
+    if (config.presignedUrlExpiry !== undefined) {
+        if (config.presignedUrlExpiry <= 0) {
+            errors.push('PRESIGNED_URL_EXPIRY must be greater than 0');
+        }
+        // Cloud providers have maximum limits:
+        // - S3: 7 days (604800 seconds) with IAM credentials, 36 hours with STS
+        // - GCS: 7 days (604800 seconds)
+        // - Azure: varies by SAS type, but commonly 7 days
+        const MAX_EXPIRY = 604800; // 7 days in seconds
+        if (config.presignedUrlExpiry > MAX_EXPIRY) {
+            errors.push(`PRESIGNED_URL_EXPIRY cannot exceed ${MAX_EXPIRY} seconds (7 days). Cloud providers enforce this limit.`);
+        }
+    }
+    // Validate max file size
+    if (config.maxFileSize !== undefined && config.maxFileSize <= 0) {
+        errors.push('MAX_FILE_SIZE must be greater than 0');
     }
     return {
         isValid: errors.length === 0,
