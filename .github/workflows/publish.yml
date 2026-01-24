@@ -43,10 +43,8 @@ jobs:
             - name: Build
               run: npm run build
 
-            - name: Publish to NPM
+            - name: Publish to NPM (Trusted Publishing)
               run: npm publish --access public --provenance
-              env:
-                  NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
     publish-github:
         name: Publish to GitHub Packages
