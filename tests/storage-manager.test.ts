@@ -5,7 +5,7 @@
  * Covers: initialization, uploads, presigned URLs, validation, deletion, listing
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import fs from 'fs';
 import path from 'path';
 import { StorageManager } from '../src/storage-manager.js';
@@ -17,7 +17,6 @@ import {
   createMockPngFile,
   createMockPdfFile,
   createEmptyMockFile,
-  createLargeMockFile,
   PATH_TRAVERSAL_CASES,
 } from './fixtures/test-helpers.js';
 
@@ -108,7 +107,7 @@ describe('StorageManager', () => {
         error: (msg: string) => logs.push(`ERROR: ${msg}`),
       };
 
-      const storage = new StorageManager({
+      new StorageManager({
         driver: 'local',
         credentials: { localPath: TEST_UPLOAD_DIR },
         logger,
@@ -918,11 +917,11 @@ describe('StorageManager', () => {
 
   describe('Driver Factory Caching', () => {
     it('should cache drivers', () => {
-      const storage1 = new StorageManager({
+      new StorageManager({
         driver: 'local',
         credentials: { localPath: TEST_UPLOAD_DIR },
       });
-      const storage2 = new StorageManager({
+      new StorageManager({
         driver: 'local',
         credentials: { localPath: TEST_UPLOAD_DIR },
       });

@@ -422,7 +422,15 @@ export class LocalStorageDriver extends BaseStorageDriver {
    */
   async delete(reference: string): Promise<boolean> {
     try {
-      if (reference.includes('..') || reference.includes('\0')) {
+      // Decode URL-encoded characters first to catch encoded traversal attempts like %2e%2e%2f
+      let decodedReference: string;
+      try {
+        decodedReference = decodeURIComponent(reference);
+      } catch {
+        return false;
+      }
+      
+      if (decodedReference.includes('..') || decodedReference.includes('\0')) {
         return false;
       }
       
@@ -468,7 +476,15 @@ export class LocalStorageDriver extends BaseStorageDriver {
   private resolveFilePath(reference: string): string | null {
     const baseDir = path.resolve(this.basePath);
     
-    if (reference.includes('..') || reference.includes('\0')) {
+    // Decode URL-encoded characters first to catch encoded traversal attempts like %2e%2e%2f
+    let decodedReference: string;
+    try {
+      decodedReference = decodeURIComponent(reference);
+    } catch {
+      return null;
+    }
+    
+    if (decodedReference.includes('..') || decodedReference.includes('\0')) {
       return null;
     }
     
@@ -509,7 +525,20 @@ export class LocalStorageDriver extends BaseStorageDriver {
     continuationToken?: string
   ): Promise<ListFilesResult> {
     try {
-      if (prefix && (prefix.includes('..') || prefix.includes('\0'))) {
+      // Decode URL-encoded characters first to catch encoded traversal attempts like %2e%2e%2f
+      let decodedPrefix: string | undefined;
+      if (prefix) {
+        try {
+          decodedPrefix = decodeURIComponent(prefix);
+        } catch {
+          return {
+            success: false,
+            error: 'Invalid prefix: malformed URL encoding',
+          };
+        }
+      }
+      
+      if (decodedPrefix && (decodedPrefix.includes('..') || decodedPrefix.includes('\0'))) {
         return {
           success: false,
           error: 'Invalid prefix: path traversal sequences are not allowed',
