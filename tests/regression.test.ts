@@ -23,7 +23,6 @@ import {
 import {
   createMockFile,
   createMockJpegFile,
-  createLargeMockFile,
 } from './fixtures/test-helpers.js';
 
 const TEST_DIR = path.join(process.cwd(), 'test-regression');
