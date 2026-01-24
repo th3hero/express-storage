@@ -32,7 +32,6 @@ const ENV_KEYS = {
   AZURE_CONNECTION_STRING: 'AZURE_CONNECTION_STRING',
   AZURE_ACCOUNT_NAME: 'AZURE_ACCOUNT_NAME',
   AZURE_ACCOUNT_KEY: 'AZURE_ACCOUNT_KEY',
-  AZURE_CONTAINER_NAME: 'AZURE_CONTAINER_NAME',
 } as const;
 
 const DEFAULT_CONFIG: Partial<StorageConfig> = {
@@ -65,7 +64,6 @@ export function loadEnvironmentConfig(): EnvironmentConfig {
     AZURE_CONNECTION_STRING: process.env[ENV_KEYS.AZURE_CONNECTION_STRING] || undefined,
     AZURE_ACCOUNT_NAME: process.env[ENV_KEYS.AZURE_ACCOUNT_NAME] || undefined,
     AZURE_ACCOUNT_KEY: process.env[ENV_KEYS.AZURE_ACCOUNT_KEY] || undefined,
-    AZURE_CONTAINER_NAME: process.env[ENV_KEYS.AZURE_CONTAINER_NAME] || undefined,
   };
 }
 
@@ -112,7 +110,7 @@ export function environmentToStorageConfig(envConfig: EnvironmentConfig): Storag
     azureConnectionString: envConfig.AZURE_CONNECTION_STRING,
     azureAccountName: envConfig.AZURE_ACCOUNT_NAME,
     azureAccountKey: envConfig.AZURE_ACCOUNT_KEY,
-    azureContainerName: envConfig.AZURE_CONTAINER_NAME,
+    azureContainerName: envConfig.BUCKET_NAME, // Use BUCKET_NAME for Azure container
   };
 
   return config;
@@ -170,8 +168,8 @@ export function validateStorageConfig(config: StorageConfig): ValidationResult {
       }
     }
     
-    if (!config.azureContainerName && !config.bucketName) {
-      errors.push('AZURE_CONTAINER_NAME or BUCKET_NAME is required for Azure');
+    if (!config.azureContainerName) {
+      errors.push('BUCKET_NAME is required for Azure');
     }
   }
 

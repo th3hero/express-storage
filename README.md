@@ -39,25 +39,25 @@ npm install express-storage
 ### Basic Setup
 
 ```typescript
-import express from 'express';
-import multer from 'multer';
-import { StorageManager } from 'express-storage';
+import express from "express";
+import multer from "multer";
+import { StorageManager } from "express-storage";
 
 const app = express();
 const upload = multer();
 const storage = new StorageManager();
 
-app.post('/upload', upload.single('file'), async (req, res) => {
-  const result = await storage.uploadFile(req.file, {
-    maxSize: 10 * 1024 * 1024, // 10MB limit
-    allowedMimeTypes: ['image/jpeg', 'image/png', 'application/pdf']
-  });
-  
-  if (result.success) {
-    res.json({ url: result.fileUrl });
-  } else {
-    res.status(400).json({ error: result.error });
-  }
+app.post("/upload", upload.single("file"), async (req, res) => {
+    const result = await storage.uploadFile(req.file, {
+        maxSize: 10 * 1024 * 1024, // 10MB limit
+        allowedMimeTypes: ["image/jpeg", "image/png", "application/pdf"],
+    });
+
+    if (result.success) {
+        res.json({ url: result.fileUrl });
+    } else {
+        res.status(400).json({ error: result.error });
+    }
 });
 ```
 
@@ -86,8 +86,8 @@ GCS_PROJECT_ID=my-project
 
 # For Azure Blob Storage
 FILE_DRIVER=azure
+BUCKET_NAME=my-container
 AZURE_CONNECTION_STRING=your-connection-string
-AZURE_CONTAINER_NAME=my-container
 ```
 
 That's it. Your upload code stays the same regardless of which provider you choose.
@@ -96,12 +96,12 @@ That's it. Your upload code stays the same regardless of which provider you choo
 
 ## Supported Storage Providers
 
-| Provider | Direct Upload | Presigned URLs | Best For |
-|----------|--------------|----------------|----------|
-| **Local Disk** | `local` | — | Development, small apps |
-| **AWS S3** | `s3` | `s3-presigned` | Most production apps |
-| **Google Cloud** | `gcs` | `gcs-presigned` | GCP-hosted applications |
-| **Azure Blob** | `azure` | `azure-presigned` | Azure-hosted applications |
+| Provider         | Direct Upload | Presigned URLs    | Best For                  |
+| ---------------- | ------------- | ----------------- | ------------------------- |
+| **Local Disk**   | `local`       | —                 | Development, small apps   |
+| **AWS S3**       | `s3`          | `s3-presigned`    | Most production apps      |
+| **Google Cloud** | `gcs`         | `gcs-presigned`   | GCP-hosted applications   |
+| **Azure Blob**   | `azure`       | `azure-presigned` | Azure-hosted applications |
 
 ---
 
@@ -115,9 +115,9 @@ Attackers try filenames like `../../../etc/passwd` to escape your upload directo
 
 ```typescript
 // These malicious filenames are automatically rejected
-"../secret.txt"     // Blocked: path traversal
-"..\\config.json"   // Blocked: Windows path traversal  
-"file\0.txt"        // Blocked: null byte injection
+"../secret.txt"; // Blocked: path traversal
+"..\\config.json"; // Blocked: Windows path traversal
+"file\0.txt"; // Blocked: null byte injection
 ```
 
 ### Automatic Filename Sanitization
@@ -137,9 +137,9 @@ Validate before processing. Reject before storing.
 
 ```typescript
 await storage.uploadFile(file, {
-  maxSize: 5 * 1024 * 1024,              // 5MB limit
-  allowedMimeTypes: ['image/jpeg', 'image/png'],
-  allowedExtensions: ['.jpg', '.png']
+    maxSize: 5 * 1024 * 1024, // 5MB limit
+    allowedMimeTypes: ["image/jpeg", "image/png"],
+    allowedExtensions: [".jpg", ".png"],
 });
 ```
 
@@ -167,46 +167,46 @@ Large files shouldn't flow through your server. Presigned URLs let clients uploa
 
 ```typescript
 // Step 1: Generate upload URL
-app.post('/upload/init', async (req, res) => {
-  const { fileName, contentType, fileSize } = req.body;
-  
-  const result = await storage.generateUploadUrl(
-    fileName,
-    contentType,
-    fileSize,
-    'user-uploads'  // Optional folder
-  );
-  
-  res.json({
-    uploadUrl: result.uploadUrl,
-    reference: result.reference  // Save this for later
-  });
+app.post("/upload/init", async (req, res) => {
+    const { fileName, contentType, fileSize } = req.body;
+
+    const result = await storage.generateUploadUrl(
+        fileName,
+        contentType,
+        fileSize,
+        "user-uploads", // Optional folder
+    );
+
+    res.json({
+        uploadUrl: result.uploadUrl,
+        reference: result.reference, // Save this for later
+    });
 });
 
 // Step 2: Confirm upload
-app.post('/upload/confirm', async (req, res) => {
-  const { reference, expectedContentType, expectedFileSize } = req.body;
-  
-  const result = await storage.validateAndConfirmUpload(reference, {
-    expectedContentType,
-    expectedFileSize
-  });
-  
-  if (result.success) {
-    res.json({ viewUrl: result.viewUrl });
-  } else {
-    res.status(400).json({ error: result.error });
-  }
+app.post("/upload/confirm", async (req, res) => {
+    const { reference, expectedContentType, expectedFileSize } = req.body;
+
+    const result = await storage.validateAndConfirmUpload(reference, {
+        expectedContentType,
+        expectedFileSize,
+    });
+
+    if (result.success) {
+        res.json({ viewUrl: result.viewUrl });
+    } else {
+        res.status(400).json({ error: result.error });
+    }
 });
 ```
 
 ### Provider-Specific Behavior
 
 | Provider | Content-Type Enforced | File Size Enforced | Post-Upload Validation |
-|----------|----------------------|-------------------|----------------------|
-| S3 | At URL level | At URL level | Optional |
-| GCS | At URL level | At URL level | Optional |
-| Azure | **Not enforced** | **Not enforced** | **Required** |
+| -------- | --------------------- | ------------------ | ---------------------- |
+| S3       | At URL level          | At URL level       | Optional               |
+| GCS      | At URL level          | At URL level       | Optional               |
+| Azure    | **Not enforced**      | **Not enforced**   | **Required**           |
 
 For Azure, always call `validateAndConfirmUpload()` with expected values. Invalid files are automatically deleted.
 
@@ -234,36 +234,36 @@ This happens transparently — you don't need to change your code.
 
 ```typescript
 // Frontend: Request presigned URL
-const { uploadUrl, reference } = await fetch('/api/upload/init', {
-  method: 'POST',
-  body: JSON.stringify({
-    fileName: 'large-video.mp4',
-    contentType: 'video/mp4',
-    fileSize: 524288000  // 500MB
-  })
-}).then(r => r.json());
+const { uploadUrl, reference } = await fetch("/api/upload/init", {
+    method: "POST",
+    body: JSON.stringify({
+        fileName: "large-video.mp4",
+        contentType: "video/mp4",
+        fileSize: 524288000, // 500MB
+    }),
+}).then((r) => r.json());
 
 // Frontend: Upload directly to cloud (bypasses your server!)
 await fetch(uploadUrl, {
-  method: 'PUT',
-  body: file,
-  headers: { 'Content-Type': 'video/mp4' }
+    method: "PUT",
+    body: file,
+    headers: { "Content-Type": "video/mp4" },
 });
 
 // Frontend: Confirm upload
-await fetch('/api/upload/confirm', {
-  method: 'POST',
-  body: JSON.stringify({ reference })
+await fetch("/api/upload/confirm", {
+    method: "POST",
+    body: JSON.stringify({ reference }),
 });
 ```
 
 ### Size Limits
 
-| Scenario | Recommended Limit | Reason |
-|----------|------------------|--------|
-| Direct upload (memory storage) | < 100MB | Node.js memory constraints |
-| Direct upload (disk storage) | < 500MB | Temp file management |
-| Presigned URL upload | 5GB+ | Limited only by cloud provider |
+| Scenario                       | Recommended Limit | Reason                         |
+| ------------------------------ | ----------------- | ------------------------------ |
+| Direct upload (memory storage) | < 100MB           | Node.js memory constraints     |
+| Direct upload (disk storage)   | < 500MB           | Temp file management           |
+| Presigned URL upload           | 5GB+              | Limited only by cloud provider |
 
 ---
 
@@ -274,20 +274,20 @@ await fetch('/api/upload/confirm', {
 The main class you'll interact with.
 
 ```typescript
-import { StorageManager } from 'express-storage';
+import { StorageManager } from "express-storage";
 
 // Use environment variables
 const storage = new StorageManager();
 
 // Or configure programmatically
 const storage = new StorageManager({
-  driver: 's3',
-  credentials: {
-    bucketName: 'my-bucket',
-    awsRegion: 'us-east-1',
-    maxFileSize: 50 * 1024 * 1024  // 50MB
-  },
-  logger: console  // Optional: enable debug logging
+    driver: "s3",
+    credentials: {
+        bucketName: "my-bucket",
+        awsRegion: "us-east-1",
+        maxFileSize: 50 * 1024 * 1024, // 50MB
+    },
+    logger: console, // Optional: enable debug logging
 });
 ```
 
@@ -338,16 +338,16 @@ const result = await storage.listFiles(prefix?, maxResults?, continuationToken?)
 
 ```typescript
 interface UploadOptions {
-  contentType?: string;              // Override detected type
-  metadata?: Record<string, string>; // Custom metadata
-  cacheControl?: string;             // e.g., 'max-age=31536000'
-  contentDisposition?: string;       // e.g., 'attachment; filename="doc.pdf"'
+    contentType?: string; // Override detected type
+    metadata?: Record<string, string>; // Custom metadata
+    cacheControl?: string; // e.g., 'max-age=31536000'
+    contentDisposition?: string; // e.g., 'attachment; filename="doc.pdf"'
 }
 
 // Example: Upload with caching headers
 await storage.uploadFile(file, undefined, {
-  cacheControl: 'public, max-age=31536000',
-  metadata: { uploadedBy: 'user-123' }
+    cacheControl: "public, max-age=31536000",
+    metadata: { uploadedBy: "user-123" },
 });
 ```
 
@@ -355,9 +355,9 @@ await storage.uploadFile(file, undefined, {
 
 ```typescript
 interface FileValidationOptions {
-  maxSize?: number;           // Maximum file size in bytes
-  allowedMimeTypes?: string[];  // e.g., ['image/jpeg', 'image/png']
-  allowedExtensions?: string[]; // e.g., ['.jpg', '.png']
+    maxSize?: number; // Maximum file size in bytes
+    allowedMimeTypes?: string[]; // e.g., ['image/jpeg', 'image/png']
+    allowedExtensions?: string[]; // e.g., ['.jpg', '.png']
 }
 ```
 
@@ -367,38 +367,39 @@ interface FileValidationOptions {
 
 ### Core Settings
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `FILE_DRIVER` | Storage driver to use | `local` |
-| `BUCKET_NAME` | Cloud storage bucket/container name | — |
-| `BUCKET_PATH` | Default folder path within bucket | `""` (root) |
-| `LOCAL_PATH` | Directory for local storage | `public/express-storage` |
-| `PRESIGNED_URL_EXPIRY` | URL validity in seconds | `600` (10 min) |
-| `MAX_FILE_SIZE` | Maximum upload size in bytes | `5368709120` (5GB) |
+| Variable               | Description                         | Default                  |
+| ---------------------- | ----------------------------------- | ------------------------ |
+| `FILE_DRIVER`          | Storage driver to use               | `local`                  |
+| `BUCKET_NAME`          | Cloud storage bucket/container name | —                        |
+| `BUCKET_PATH`          | Default folder path within bucket   | `""` (root)              |
+| `LOCAL_PATH`           | Directory for local storage         | `public/express-storage` |
+| `PRESIGNED_URL_EXPIRY` | URL validity in seconds             | `600` (10 min)           |
+| `MAX_FILE_SIZE`        | Maximum upload size in bytes        | `5368709120` (5GB)       |
 
 ### AWS S3
 
-| Variable | Description |
-|----------|-------------|
-| `AWS_REGION` | AWS region (e.g., `us-east-1`) |
-| `AWS_ACCESS_KEY` | Access key ID (optional if using IAM roles) |
+| Variable         | Description                                     |
+| ---------------- | ----------------------------------------------- |
+| `AWS_REGION`     | AWS region (e.g., `us-east-1`)                  |
+| `AWS_ACCESS_KEY` | Access key ID (optional if using IAM roles)     |
 | `AWS_SECRET_KEY` | Secret access key (optional if using IAM roles) |
 
 ### Google Cloud Storage
 
-| Variable | Description |
-|----------|-------------|
-| `GCS_PROJECT_ID` | Google Cloud project ID |
+| Variable          | Description                                      |
+| ----------------- | ------------------------------------------------ |
+| `GCS_PROJECT_ID`  | Google Cloud project ID                          |
 | `GCS_CREDENTIALS` | Path to service account JSON (optional with ADC) |
 
 ### Azure Blob Storage
 
-| Variable | Description |
-|----------|-------------|
-| `AZURE_CONNECTION_STRING` | Full connection string (recommended) |
-| `AZURE_ACCOUNT_NAME` | Storage account name (alternative) |
-| `AZURE_ACCOUNT_KEY` | Storage account key (alternative) |
-| `AZURE_CONTAINER_NAME` | Container name (falls back to `BUCKET_NAME`) |
+| Variable                  | Description                                       |
+| ------------------------- | ------------------------------------------------- |
+| `AZURE_CONNECTION_STRING` | Full connection string (recommended)              |
+| `AZURE_ACCOUNT_NAME`      | Storage account name (alternative)                |
+| `AZURE_ACCOUNT_KEY`       | Storage account key (alternative)                 |
+
+**Note**: Azure uses `BUCKET_NAME` for the container name (same as S3/GCS).
 
 ---
 
@@ -409,48 +410,45 @@ Express Storage includes battle-tested utilities you can use directly.
 ### Retry with Exponential Backoff
 
 ```typescript
-import { withRetry } from 'express-storage';
+import { withRetry } from "express-storage";
 
-const result = await withRetry(
-  () => storage.uploadFile(file),
-  {
+const result = await withRetry(() => storage.uploadFile(file), {
     maxAttempts: 3,
     baseDelay: 1000,
     maxDelay: 10000,
-    exponentialBackoff: true
-  }
-);
+    exponentialBackoff: true,
+});
 ```
 
 ### File Type Helpers
 
 ```typescript
-import { 
-  isImageFile, 
-  isDocumentFile, 
-  getFileExtension,
-  formatFileSize 
-} from 'express-storage';
+import {
+    isImageFile,
+    isDocumentFile,
+    getFileExtension,
+    formatFileSize,
+} from "express-storage";
 
-isImageFile('image/jpeg');        // true
-isDocumentFile('application/pdf'); // true
-getFileExtension('photo.jpg');     // '.jpg'
-formatFileSize(1048576);           // '1 MB'
+isImageFile("image/jpeg"); // true
+isDocumentFile("application/pdf"); // true
+getFileExtension("photo.jpg"); // '.jpg'
+formatFileSize(1048576); // '1 MB'
 ```
 
 ### Custom Logging
 
 ```typescript
-import { StorageManager, Logger } from 'express-storage';
+import { StorageManager, Logger } from "express-storage";
 
 const logger: Logger = {
-  debug: (msg, ...args) => console.debug(`[Storage] ${msg}`, ...args),
-  info: (msg, ...args) => console.info(`[Storage] ${msg}`, ...args),
-  warn: (msg, ...args) => console.warn(`[Storage] ${msg}`, ...args),
-  error: (msg, ...args) => console.error(`[Storage] ${msg}`, ...args),
+    debug: (msg, ...args) => console.debug(`[Storage] ${msg}`, ...args),
+    info: (msg, ...args) => console.info(`[Storage] ${msg}`, ...args),
+    warn: (msg, ...args) => console.warn(`[Storage] ${msg}`, ...args),
+    error: (msg, ...args) => console.error(`[Storage] ${msg}`, ...args),
 };
 
-const storage = new StorageManager({ driver: 's3', logger });
+const storage = new StorageManager({ driver: "s3", logger });
 ```
 
 ---
@@ -460,21 +458,25 @@ const storage = new StorageManager({ driver: 's3', logger });
 ### Profile Picture Upload
 
 ```typescript
-app.post('/users/:id/avatar', upload.single('avatar'), async (req, res) => {
-  const result = await storage.uploadFile(req.file, {
-    maxSize: 2 * 1024 * 1024,  // 2MB
-    allowedMimeTypes: ['image/jpeg', 'image/png', 'image/webp']
-  }, {
-    cacheControl: 'public, max-age=86400',
-    metadata: { userId: req.params.id }
-  });
-  
-  if (result.success) {
-    await db.users.update(req.params.id, { avatarUrl: result.fileUrl });
-    res.json({ avatarUrl: result.fileUrl });
-  } else {
-    res.status(400).json({ error: result.error });
-  }
+app.post("/users/:id/avatar", upload.single("avatar"), async (req, res) => {
+    const result = await storage.uploadFile(
+        req.file,
+        {
+            maxSize: 2 * 1024 * 1024, // 2MB
+            allowedMimeTypes: ["image/jpeg", "image/png", "image/webp"],
+        },
+        {
+            cacheControl: "public, max-age=86400",
+            metadata: { userId: req.params.id },
+        },
+    );
+
+    if (result.success) {
+        await db.users.update(req.params.id, { avatarUrl: result.fileUrl });
+        res.json({ avatarUrl: result.fileUrl });
+    } else {
+        res.status(400).json({ error: result.error });
+    }
 });
 ```
 
@@ -482,70 +484,76 @@ app.post('/users/:id/avatar', upload.single('avatar'), async (req, res) => {
 
 ```typescript
 // Frontend requests upload URL
-app.post('/documents/request-upload', async (req, res) => {
-  const { fileName, fileSize } = req.body;
-  
-  const result = await storage.generateUploadUrl(
-    fileName,
-    'application/pdf',
-    fileSize,
-    `documents/${req.user.id}`
-  );
-  
-  // Store pending upload in database
-  await db.documents.create({
-    reference: result.reference,
-    userId: req.user.id,
-    status: 'pending'
-  });
-  
-  res.json({
-    uploadUrl: result.uploadUrl,
-    reference: result.reference
-  });
+app.post("/documents/request-upload", async (req, res) => {
+    const { fileName, fileSize } = req.body;
+
+    const result = await storage.generateUploadUrl(
+        fileName,
+        "application/pdf",
+        fileSize,
+        `documents/${req.user.id}`,
+    );
+
+    // Store pending upload in database
+    await db.documents.create({
+        reference: result.reference,
+        userId: req.user.id,
+        status: "pending",
+    });
+
+    res.json({
+        uploadUrl: result.uploadUrl,
+        reference: result.reference,
+    });
 });
 
 // Frontend confirms upload complete
-app.post('/documents/confirm-upload', async (req, res) => {
-  const { reference } = req.body;
-  
-  const result = await storage.validateAndConfirmUpload(reference, {
-    expectedContentType: 'application/pdf'
-  });
-  
-  if (result.success) {
-    await db.documents.update({ reference }, { 
-      status: 'uploaded',
-      size: result.actualFileSize 
+app.post("/documents/confirm-upload", async (req, res) => {
+    const { reference } = req.body;
+
+    const result = await storage.validateAndConfirmUpload(reference, {
+        expectedContentType: "application/pdf",
     });
-    res.json({ success: true, viewUrl: result.viewUrl });
-  } else {
-    await db.documents.delete({ reference });
-    res.status(400).json({ error: result.error });
-  }
+
+    if (result.success) {
+        await db.documents.update(
+            { reference },
+            {
+                status: "uploaded",
+                size: result.actualFileSize,
+            },
+        );
+        res.json({ success: true, viewUrl: result.viewUrl });
+    } else {
+        await db.documents.delete({ reference });
+        res.status(400).json({ error: result.error });
+    }
 });
 ```
 
 ### Bulk File Upload
 
 ```typescript
-app.post('/gallery/upload', upload.array('photos', 20), async (req, res) => {
-  const files = req.files as Express.Multer.File[];
-  
-  const results = await storage.uploadFiles(files, {
-    maxSize: 10 * 1024 * 1024,
-    allowedMimeTypes: ['image/jpeg', 'image/png']
-  });
-  
-  const successful = results.filter(r => r.success);
-  const failed = results.filter(r => !r.success);
-  
-  res.json({
-    uploaded: successful.length,
-    failed: failed.length,
-    files: successful.map(r => ({ fileName: r.fileName, url: r.fileUrl })),
-    errors: failed.map(r => r.error)
-  });
+app.post("/gallery/upload", upload.array("photos", 20), async (req, res) => {
+    const files = req.files as Express.Multer.File[];
+
+    const results = await storage.uploadFiles(files, {
+        maxSize: 10 * 1024 * 1024,
+        allowedMimeTypes: ["image/jpeg", "image/png"],
+    });
+
+    const successful = results.filter((r) => r.success);
+    const failed = results.filter((r) => !r.success);
+
+    res.json({
+        uploaded: successful.length,
+        failed: failed.length,
+        files: successful.map((r) => ({
+            fileName: r.fileName,
+            url: r.fileUrl,
+        })),
+        errors: failed.map((r) => r.error),
+    });
 });
 ```
 
@@ -580,8 +588,8 @@ AWS_REGION=us-east-1
 
 # After
 FILE_DRIVER=azure
+BUCKET_NAME=my-container
 AZURE_CONNECTION_STRING=DefaultEndpointsProtocol=https;AccountName=...
-AZURE_CONTAINER_NAME=my-container
 ```
 
 **Important**: If using presigned URLs, remember that Azure requires post-upload validation. Add `validateAndConfirmUpload()` calls to your confirmation endpoints.
@@ -593,22 +601,22 @@ AZURE_CONTAINER_NAME=my-container
 Express Storage is written in TypeScript and exports all types:
 
 ```typescript
-import { 
-  StorageManager,
-  StorageDriver,
-  FileUploadResult,
-  PresignedUrlResult,
-  FileValidationOptions,
-  UploadOptions,
-  Logger
-} from 'express-storage';
+import {
+    StorageManager,
+    StorageDriver,
+    FileUploadResult,
+    PresignedUrlResult,
+    FileValidationOptions,
+    UploadOptions,
+    Logger,
+} from "express-storage";
 
 // Full autocomplete and type checking
 const result: FileUploadResult = await storage.uploadFile(file);
 
 if (result.success) {
-  console.log(result.fileName);  // TypeScript knows this exists
-  console.log(result.fileUrl);   // TypeScript knows this exists
+    console.log(result.fileName); // TypeScript knows this exists
+    console.log(result.fileUrl); // TypeScript knows this exists
 }
 ```
 
