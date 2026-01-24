@@ -1,0 +1,106 @@
+{
+  "name": "express-storage",
+  "version": "1.1.0",
+  "description": "Secure, unified file upload and cloud storage management for Express.js. One API for AWS S3, Google Cloud Storage, Azure Blob Storage, and local disk. Built-in security with path traversal prevention, file validation, presigned URLs, and automatic filename sanitization. Switch storage providers with zero code changes — just update your environment variables.",
+  "homepage": "https://github.com/th3hero/express-storage#readme",
+  "bugs": {
+    "url": "https://github.com/th3hero/express-storage/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/th3hero/express-storage.git"
+  },
+  "license": "MIT",
+  "author": "Alok Kumar (th3hero)",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "express",
+    "file-upload",
+    "storage",
+    "upload",
+    "file-storage",
+    "cloud-storage",
+    "s3",
+    "aws-s3",
+    "amazon-s3",
+    "gcs",
+    "google-cloud-storage",
+    "azure",
+    "azure-blob",
+    "azure-blob-storage",
+    "blob-storage",
+    "presigned-url",
+    "presigned-upload",
+    "direct-upload",
+    "secure-upload",
+    "file-validation",
+    "multer",
+    "multer-storage",
+    "typescript",
+    "nodejs",
+    "expressjs",
+    "file-manager",
+    "upload-manager",
+    "storage-driver",
+    "multi-cloud",
+    "hybrid-cloud",
+    "file-security",
+    "upload-security"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "clean": "rm -rf dist",
+    "prepublishOnly": "npm run clean && npm run build",
+    "lint": "eslint src --ext .ts",
+    "lint:fix": "eslint src --ext .ts --fix",
+    "format": "prettier --write src/**/*.ts",
+    "type-check": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage"
+  },
+  "peerDependencies": {
+    "express": "^4.21.2"
+  },
+  "engines": {
+    "node": ">=16.0.0"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.975.0",
+    "@aws-sdk/lib-storage": "^3.975.0",
+    "@aws-sdk/s3-request-presigner": "^3.975.0",
+    "@azure/identity": "^4.13.0",
+    "@azure/storage-blob": "^12.30.0",
+    "@google-cloud/storage": "^7.18.0",
+    "dotenv": "^17.2.3",
+    "multer": "^2.0.2",
+    "tslib": "^2.8.1"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.6",
+    "@types/multer": "^2.0.0",
+    "@types/node": "^25.0.10",
+    "@typescript-eslint/eslint-plugin": "^8.53.1",
+    "@typescript-eslint/parser": "^8.53.1",
+    "@vitest/coverage-v8": "^4.0.18",
+    "eslint": "^9.39.2",
+    "memfs": "^4.56.10",
+    "prettier": "^3.8.1",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.18"
+  }
+}

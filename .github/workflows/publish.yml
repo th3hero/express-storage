@@ -1,0 +1,104 @@
+name: Publish Package
+
+on:
+    release:
+        types: [created]
+
+permissions:
+    id-token: write
+    contents: write
+    packages: write
+
+jobs:
+    publish-npm:
+        name: Publish to NPM
+        runs-on: ubuntu-latest
+        outputs:
+            version: ${{ steps.version.outputs.version }}
+        steps:
+            - uses: actions/checkout@v4
+              with:
+                  ref: main
+
+            - name: Setup NodeJS
+              uses: actions/setup-node@v4
+              with:
+                  node-version: "20.x"
+                  registry-url: "https://registry.npmjs.org/"
+
+            - name: Get version from release tag
+              id: version
+              run: |
+                  # Extract version from tag (removes 'v' or 'V' prefix if present)
+                  VERSION=$(echo "${GITHUB_REF_NAME}" | sed 's/^[vV]//')
+                  echo "version=$VERSION" >> $GITHUB_OUTPUT
+                  echo "Publishing version: $VERSION"
+
+            - name: Update package.json version
+              run: npm version ${{ steps.version.outputs.version }} --no-git-tag-version --allow-same-version
+
+            - name: Install Dependencies
+              run: npm ci
+
+            - name: Build
+              run: npm run build
+
+            - name: Publish to NPM
+              run: npm publish --access public --provenance
+              env:
+                  NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+    publish-github:
+        name: Publish to GitHub Packages
+        runs-on: ubuntu-latest
+        needs: publish-npm
+        steps:
+            - uses: actions/checkout@v4
+              with:
+                  ref: main
+
+            - name: Setup NodeJS for GitHub Packages
+              uses: actions/setup-node@v4
+              with:
+                  node-version: "20.x"
+                  registry-url: "https://npm.pkg.github.com/"
+                  scope: "@th3hero"
+
+            - name: Update package.json version
+              run: npm version ${{ needs.publish-npm.outputs.version }} --no-git-tag-version --allow-same-version
+
+            - name: Install Dependencies
+              run: npm ci
+
+            - name: Build
+              run: npm run build
+
+            - name: Publish to GitHub Packages
+              run: npm publish --access public
+              env:
+                  NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    update-repo:
+        name: Update Repository
+        runs-on: ubuntu-latest
+        needs: [publish-npm, publish-github]
+        steps:
+            - uses: actions/checkout@v4
+              with:
+                  ref: main
+
+            - name: Setup NodeJS
+              uses: actions/setup-node@v4
+              with:
+                  node-version: "20.x"
+
+            - name: Update package.json version
+              run: npm version ${{ needs.publish-npm.outputs.version }} --no-git-tag-version --allow-same-version
+
+            - name: Commit and push version update
+              run: |
+                  git config user.name "github-actions[bot]"
+                  git config user.email "github-actions[bot]@users.noreply.github.com"
+                  git add package.json package-lock.json
+                  git diff --staged --quiet || git commit -m "chore: bump version to ${{ needs.publish-npm.outputs.version }}"
+                  git push origin main
