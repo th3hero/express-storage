@@ -1,6 +1,6 @@
 {
   "name": "express-storage",
-  "version": "2.0.0",
+  "version": "1.1.0",
   "description": "Secure, unified file upload and cloud storage management for Express.js. One API for AWS S3, Google Cloud Storage, Azure Blob Storage, and local disk. Built-in security with path traversal prevention, file validation, presigned URLs, and automatic filename sanitization. Switch storage providers with zero code changes — just update your environment variables.",
   "homepage": "https://github.com/th3hero/express-storage#readme",
   "bugs": {
