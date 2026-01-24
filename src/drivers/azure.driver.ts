@@ -32,7 +32,7 @@ export class AzureStorageDriver extends BaseStorageDriver {
     
     this.containerName = config.azureContainerName || config.bucketName || '';
     if (!this.containerName) {
-      throw new Error('Azure container name is required. Set AZURE_CONTAINER_NAME or BUCKET_NAME.');
+      throw new Error('Azure container name is required. Set BUCKET_NAME environment variable or pass azureContainerName in credentials.');
     }
     this.accountName = '';
     

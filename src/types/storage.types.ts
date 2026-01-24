@@ -135,9 +135,31 @@ export interface FileMetadata {
 
 /**
  * Credentials and settings for storage configuration.
+ * 
+ * These can be passed programmatically to override environment variables.
+ * 
+ * @example
+ * // Override bucket name programmatically
+ * const storage = new StorageManager({
+ *   driver: 's3',
+ *   credentials: {
+ *     bucketName: 'my-custom-bucket',  // Overrides BUCKET_NAME env var
+ *     awsRegion: 'us-west-2',
+ *   }
+ * });
+ * 
+ * @example
+ * // Use different Azure container than BUCKET_NAME
+ * const storage = new StorageManager({
+ *   driver: 'azure',
+ *   credentials: {
+ *     azureContainerName: 'custom-container',  // Overrides BUCKET_NAME for Azure
+ *     azureConnectionString: '...',
+ *   }
+ * });
  */
 export interface StorageCredentials {
-  /** Bucket or container name */
+  /** Bucket or container name (S3/GCS bucket, Azure container) */
   bucketName?: string;
   /** Default folder path (e.g., 'uploads/files') */
   bucketPath?: string;
@@ -161,6 +183,7 @@ export interface StorageCredentials {
   azureConnectionString?: string;
   azureAccountName?: string;
   azureAccountKey?: string;
+  /** Azure container name (overrides bucketName for Azure driver) */
   azureContainerName?: string;
 }
 
@@ -308,5 +331,4 @@ export interface EnvironmentConfig {
   AZURE_CONNECTION_STRING?: string | undefined;
   AZURE_ACCOUNT_NAME?: string | undefined;
   AZURE_ACCOUNT_KEY?: string | undefined;
-  AZURE_CONTAINER_NAME?: string | undefined;
 }

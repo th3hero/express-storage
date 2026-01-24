@@ -85,6 +85,8 @@ web_modules/
 # Local uploads (for testing)
 public/uploads/
 public/express-storage/
+test-uploads/
+examples/test-uploads/
 
 # parcel-bundler cache (https://parceljs.org/)
 .cache
@@ -154,3 +156,6 @@ out
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 
+# Ignore credentials.
+credentials/*
+examples/credentials/*
