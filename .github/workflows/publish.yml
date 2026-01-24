@@ -7,7 +7,6 @@ on:
 permissions:
     id-token: write
     contents: write
-    packages: write
 
 jobs:
     publish-npm:
@@ -49,45 +48,10 @@ jobs:
             - name: Publish to NPM (Trusted Publishing)
               run: npm publish --access public
 
-    publish-github:
-        name: Publish to GitHub Packages
-        runs-on: ubuntu-latest
-        needs: publish-npm
-        steps:
-            - uses: actions/checkout@v4
-              with:
-                  ref: main
-
-            - name: Setup NodeJS for GitHub Packages
-              uses: actions/setup-node@v4
-              with:
-                  node-version: "20.x"
-                  registry-url: "https://npm.pkg.github.com"
-                  scope: "@th3hero"
-
-            - name: Update package.json version
-              run: npm version ${{ needs.publish-npm.outputs.version }} --no-git-tag-version --allow-same-version
-
-            - name: Install Dependencies
-              run: npm ci
-
-            - name: Build
-              run: npm run build
-
-            - name: Create .npmrc file
-              run: |
-                  echo "@th3hero:registry=https://npm.pkg.github.com/" >> .npmrc
-                  echo "//npm.pkg.github.com/:_authToken=${{ secrets.GITHUB_TOKEN }}" >> .npmrc
-
-            - name: Publish to GitHub Packages
-              run: npm publish --access public
-              env:
-                  NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
     update-repo:
         name: Update Repository
         runs-on: ubuntu-latest
-        needs: [publish-npm, publish-github]
+        needs: publish-npm
         steps:
             - uses: actions/checkout@v4
               with:
