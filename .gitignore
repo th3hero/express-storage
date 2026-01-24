@@ -1,3 +1,6 @@
+# macOS
+.DS_Store
+
 # Logs
 logs
 *.log
@@ -8,6 +11,11 @@ lerna-debug.log*
 
 # Diagnostic reports (https://nodejs.org/api/report.html)
 report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
+
+# build is nog going to be pushed to the repo
+dist/*
+public/*
+!public/.gitkeep
 
 # Runtime data
 pids
@@ -69,6 +77,19 @@ web_modules/
 .env
 .env.*
 !.env.example
+!env.example
+
+# Credential files (GCS, OCI, etc.)
+*.json
+!package.json
+!package-lock.json
+!tsconfig.json
+
+# Local uploads (for testing)
+public/uploads/
+public/express-storage/
+test-uploads/
+examples/test-uploads/
 
 # parcel-bundler cache (https://parceljs.org/)
 .cache
@@ -80,7 +101,8 @@ out
 
 # Nuxt.js build / generate output
 .nuxt
-dist
+
+# Note: dist is NOT ignored - it's needed for npm package
 
 # Gatsby files
 .cache/
@@ -121,7 +143,6 @@ dist
 
 # TernJS port file
 .tern-port
-
 # Stores VSCode versions used for testing VSCode extensions
 .vscode-test
 
@@ -137,3 +158,7 @@ dist
 # Vite logs files
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
+
+# Ignore credentials.
+credentials/*
+examples/credentials/*
