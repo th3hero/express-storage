@@ -1,6 +1,20 @@
 import { StorageManager, StorageDriver, FileValidationOptions } from './src/index.js';
 
 /**
+ * Parse environment variable as integer with fallback
+ * Returns undefined if value is not a valid number (lets StorageManager use defaults)
+ */
+function parseEnvInt(value: string | undefined, fallback?: number): number | undefined {
+  if (!value) return fallback;
+  const parsed = parseInt(value, 10);
+  if (Number.isNaN(parsed)) {
+    console.warn(`Warning: Invalid numeric value "${value}", using default`);
+    return fallback;
+  }
+  return parsed;
+}
+
+/**
  * Example: Initialize storage with environment variables
  * This allows switching storage providers without code changes
  */
@@ -10,7 +24,7 @@ const storage = new StorageManager({
     // Common
     bucketName: process.env['BUCKET_NAME'],
     localPath: process.env['LOCAL_PATH'] || 'public/express-storage',
-    presignedUrlExpiry: Number(process.env['PRESIGNED_URL_EXPIRY']) || 600,
+    presignedUrlExpiry: parseEnvInt(process.env['PRESIGNED_URL_EXPIRY'], 600),
     
     // AWS S3
     awsRegion: process.env['AWS_REGION'],
@@ -66,7 +80,7 @@ async function getPresignedUploadUrl(fileName: string) {
       uploadUrl: result.uploadUrl,
       fileName: result.fileName,
       contentType: result.contentType,
-      maxSize: result.maxSize,
+      fileSize: result.fileSize,
       expiresIn: result.expiresIn,
     });
   }

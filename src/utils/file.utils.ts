@@ -1,19 +1,33 @@
 import path from 'path';
 import fs from 'fs';
+import crypto from 'crypto';
 
 /**
- * Generate unique filename with unix timestamp (milliseconds), random suffix, and sanitized original name
- * Format: {timestamp}_{random}_{sanitized_name}.{extension} e.g., 1769104576000_a1b2c3_my_image.jpeg
- * Random suffix prevents collisions in high-throughput scenarios
+ * Creates a unique filename that won't collide with existing files.
+ * 
+ * Format: {timestamp}_{random}_{sanitized_name}.{extension}
+ * Example: 1769104576000_a1b2c3d4e5_my_image.jpeg
+ * 
+ * The random part uses crypto.randomBytes() for extra collision resistance
+ * in high-throughput scenarios.
  */
 export function generateUniqueFileName(originalName: string): string {
-  const timestamp = Date.now(); // Unix timestamp in milliseconds
-  const randomSuffix = Math.random().toString(36).substring(2, 8); // 6 char random string
-  const extension = path.extname(originalName).toLowerCase();
-  const sanitizedName = sanitizeFileName(originalName);
-  let baseName = path.basename(sanitizedName, path.extname(sanitizedName));
+  const timestamp = Date.now();
+  const randomSuffix = crypto.randomBytes(6).toString('hex').substring(0, 10);
   
-  // Ensure baseName is not empty (handles files with only special chars or no name)
+  // Handle dotfiles like .gitignore or .env (they have no extension)
+  let extension: string;
+  let baseName: string;
+  
+  if (originalName.startsWith('.') && !originalName.slice(1).includes('.')) {
+    extension = '';
+    baseName = sanitizeFileName(originalName);
+  } else {
+    extension = path.extname(originalName).toLowerCase();
+    const sanitizedName = sanitizeFileName(originalName);
+    baseName = path.basename(sanitizedName, path.extname(sanitizedName));
+  }
+  
   if (!baseName || baseName.trim() === '') {
     baseName = 'file';
   }
@@ -22,22 +36,34 @@ export function generateUniqueFileName(originalName: string): string {
 }
 
 /**
- * Sanitize filename to prevent security issues
- * Returns 'file' if sanitization produces empty string
+ * Makes a filename safe for storage by removing problematic characters.
+ * 
+ * Replaces anything that isn't alphanumeric, a dot, or a hyphen with underscores.
+ * This ensures compatibility with all filesystems and cloud storage providers.
+ * 
+ * Note: Unicode characters like Chinese or emojis become underscores.
+ * If you need to preserve these, consider using your own sanitization function.
  */
 export function sanitizeFileName(fileName: string): string {
   const sanitized = fileName
-    .replace(/[^a-zA-Z0-9.-]/g, '_') // Replace special characters with underscore
-    .replace(/_{2,}/g, '_') // Replace multiple underscores with single
-    .replace(/^_+|_+$/g, ''); // Remove leading/trailing underscores
+    .normalize('NFC')
+    .replace(/[^a-zA-Z0-9.-]/g, '_')
+    .replace(/_{2,}/g, '_')
+    .replace(/^_+|_+$/g, '');
   
-  // Return default name if sanitization produces empty string
   return sanitized || 'file';
 }
 
 /**
- * Validate filename for security and compatibility
- * Returns error message if invalid, null if valid
+ * Checks if a filename is safe to use.
+ * 
+ * Rejects:
+ * - Empty filenames
+ * - Filenames over 255 characters
+ * - Path traversal attempts (../, /, \)
+ * - Null bytes
+ * 
+ * Returns an error message if invalid, null if OK.
  */
 export function validateFileName(fileName: string): string | null {
   if (!fileName || typeof fileName !== 'string') {
@@ -49,17 +75,14 @@ export function validateFileName(fileName: string): string | null {
     return 'Filename cannot be empty';
   }
   
-  // Check for extremely long filenames (most filesystems limit to 255 bytes)
   if (trimmed.length > 255) {
     return 'Filename is too long (max 255 characters)';
   }
   
-  // Check for path traversal
   if (trimmed.includes('..') || trimmed.includes('/') || trimmed.includes('\\')) {
     return 'Filename cannot contain path separators or traversal sequences';
   }
   
-  // Check for null bytes
   if (trimmed.includes('\0')) {
     return 'Filename cannot contain null bytes';
   }
@@ -68,19 +91,22 @@ export function validateFileName(fileName: string): string | null {
 }
 
 /**
- * Create date-based directory path
- * Format: YYYY/MM (e.g., 2026/01) for better sorting and shorter paths
+ * Creates a date-based folder path: YYYY/MM
+ * 
+ * Uses UTC to keep things consistent across timezones.
+ * Example: For January 2026 -> 'uploads/2026/01'
  */
 export function createMonthBasedPath(basePath: string): string {
   const now = new Date();
-  const year = now.getFullYear();
-  const month = String(now.getMonth() + 1).padStart(2, '0'); // 01-12
+  const year = now.getUTCFullYear();
+  const month = String(now.getUTCMonth() + 1).padStart(2, '0');
   
   return path.join(basePath, year.toString(), month);
 }
 
 /**
- * Ensure directory exists, create if it doesn't
+ * Creates a directory if it doesn't exist.
+ * Also creates any parent directories needed (recursive).
  */
 export function ensureDirectoryExists(dirPath: string): void {
   if (!fs.existsSync(dirPath)) {
@@ -89,54 +115,81 @@ export function ensureDirectoryExists(dirPath: string): void {
 }
 
 /**
- * Get file size in human readable format
+ * Converts bytes to a human-readable string.
+ * 
+ * Examples:
+ * - 1024 -> "1 KB"
+ * - 1048576 -> "1 MB"
+ * - 0 -> "0 Bytes"
  */
 export function formatFileSize(bytes: number): string {
   const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
-  if (bytes === 0) return '0 Bytes';
   
-  const i = Math.floor(Math.log(bytes) / Math.log(1024));
-  return Math.round(bytes / Math.pow(1024, i) * 100) / 100 + ' ' + sizes[i];
+  if (typeof bytes !== 'number' || Number.isNaN(bytes)) {
+    return 'Invalid size';
+  }
+  if (!Number.isFinite(bytes)) {
+    return bytes > 0 ? 'Infinite' : 'Invalid size';
+  }
+  if (bytes < 0) {
+    return 'Invalid size (negative)';
+  }
+  if (bytes === 0) {
+    return '0 Bytes';
+  }
+  
+  let i = 0;
+  let size = bytes;
+  while (size >= 1024 && i < sizes.length - 1) {
+    size /= 1024;
+    i++;
+  }
+  
+  return Math.round(size * 100) / 100 + ' ' + sizes[i];
 }
 
 /**
- * Validate file size
+ * Checks if a file size is within the allowed limit.
  */
 export function validateFileSize(fileSize: number, maxSize: number): boolean {
   return fileSize <= maxSize;
 }
 
 /**
- * Validate file type
+ * Checks if a MIME type is in the allowed list.
  */
 export function validateFileType(mimeType: string, allowedTypes: string[]): boolean {
   return allowedTypes.includes(mimeType);
 }
 
 /**
- * Create relative URL for local files
- */
-export function createLocalFileUrl(filePath: string, baseUrl: string = ''): string {
-  const relativePath = filePath.replace(/^public\//, '');
-  return `${baseUrl}/${relativePath}`.replace(/\/+/g, '/');
-}
-
-/**
- * Get file extension from filename
+ * Extracts the file extension (lowercase, includes the dot).
+ * 
+ * Examples:
+ * - 'photo.jpg' -> '.jpg'
+ * - '.gitignore' -> '' (dotfiles have no extension)
+ * - 'archive.tar.gz' -> '.gz' (only the last extension)
  */
 export function getFileExtension(fileName: string): string {
+  if (!fileName) return '';
+  
+  // Dotfiles like .gitignore don't have extensions
+  if (fileName.startsWith('.') && !fileName.slice(1).includes('.')) {
+    return '';
+  }
+  
   return path.extname(fileName).toLowerCase();
 }
 
 /**
- * Check if file is an image
+ * Checks if a MIME type indicates an image.
  */
 export function isImageFile(mimeType: string): boolean {
   return mimeType.startsWith('image/');
 }
 
 /**
- * Check if file is a document
+ * Checks if a MIME type indicates a document (PDF, Word, Excel, etc.).
  */
 export function isDocumentFile(mimeType: string): boolean {
   const documentTypes = [
@@ -152,35 +205,34 @@ export function isDocumentFile(mimeType: string): boolean {
 }
 
 /**
- * Retry options for cloud operations
+ * Configuration for retry behavior.
  */
 export interface RetryOptions {
-  /**
-   * Maximum number of total attempts (including initial attempt)
-   * Default: 3 (1 initial + 2 retries)
-   * @example maxAttempts: 4 means 1 initial attempt + 3 retries
-   */
+  /** Total attempts including the first one. Default: 3 */
   maxAttempts?: number;
-  baseDelay?: number;       // Base delay in ms between retries (default: 1000)
-  maxDelay?: number;        // Maximum delay in ms (default: 10000)
-  exponentialBackoff?: boolean; // Use exponential backoff (default: true)
+  /** Starting delay between retries in ms. Default: 1000 */
+  baseDelay?: number;
+  /** Maximum delay between retries in ms. Default: 10000 */
+  maxDelay?: number;
+  /** Use exponential backoff. Default: true */
+  exponentialBackoff?: boolean;
 }
 
 /**
- * Execute an async operation with retry logic
- * Uses exponential backoff by default
+ * Retries an async operation with exponential backoff.
  * 
- * @param operation - Async function to execute
- * @param options - Retry configuration options
- * @returns Result of the operation
- * @throws Last error if all attempts fail
+ * Great for cloud operations that might fail due to network blips
+ * or rate limiting.
  * 
  * @example
- * // 3 total attempts (default)
- * await withRetry(() => fetchData());
+ * // Retry up to 3 times with increasing delays
+ * const result = await withRetry(() => storage.uploadFile(file));
  * 
- * // 5 total attempts (1 initial + 4 retries)
- * await withRetry(() => fetchData(), { maxAttempts: 5 });
+ * // More aggressive retry strategy
+ * const result = await withRetry(() => fetchData(), {
+ *   maxAttempts: 5,
+ *   baseDelay: 500
+ * });
  */
 export async function withRetry<T>(
   operation: () => Promise<T>,
@@ -201,7 +253,6 @@ export async function withRetry<T>(
     } catch (error) {
       lastError = error instanceof Error ? error : new Error(String(error));
       
-      // Don't wait after the last attempt
       if (attempt < maxAttempts) {
         const delay = exponentialBackoff
           ? Math.min(baseDelay * Math.pow(2, attempt - 1), maxDelay)
@@ -216,8 +267,84 @@ export async function withRetry<T>(
 }
 
 /**
- * Sleep for specified milliseconds
+ * Pauses execution for the specified number of milliseconds.
  */
 export function sleep(ms: number): Promise<void> {
   return new Promise(resolve => globalThis.setTimeout(resolve, ms));
+}
+
+/**
+ * Configuration for concurrent execution.
+ */
+export interface ConcurrencyOptions {
+  /** Maximum parallel operations. Default: 10 */
+  maxConcurrent?: number;
+}
+
+/**
+ * Processes an array with a concurrency limit.
+ * 
+ * Prevents overwhelming APIs or running out of resources by limiting
+ * how many operations run at once.
+ * 
+ * Implementation uses pre-assigned chunk-based processing to avoid any
+ * potential race conditions with shared index counters. Each worker gets
+ * its own set of indices to process.
+ * 
+ * Note: The input array is snapshotted at the start to prevent issues
+ * if the caller modifies it during processing.
+ * 
+ * @example
+ * // Upload 100 files, but only 10 at a time
+ * const results = await withConcurrencyLimit(
+ *   files,
+ *   (file) => uploadFile(file),
+ *   { maxConcurrent: 10 }
+ * );
+ */
+export async function withConcurrencyLimit<T, R>(
+  items: T[],
+  operation: (item: T, index: number) => Promise<R>,
+  options: ConcurrencyOptions = {}
+): Promise<R[]> {
+  const { maxConcurrent = 10 } = options;
+  
+  if (items.length === 0) {
+    return [];
+  }
+  
+  // Snapshot the array to prevent issues if caller modifies it during processing
+  const itemsCopy = [...items];
+  const itemCount = itemsCopy.length;
+  
+  // For small batches, just process everything at once
+  if (itemCount <= maxConcurrent) {
+    return Promise.all(itemsCopy.map((item, index) => operation(item, index)));
+  }
+  
+  const results: R[] = new Array(itemCount);
+  const workerCount = Math.min(maxConcurrent, itemCount);
+  
+  // Pre-assign indices to each worker to avoid any race conditions
+  // Each worker gets a dedicated set of indices: worker 0 gets [0, workerCount, 2*workerCount, ...],
+  // worker 1 gets [1, workerCount+1, 2*workerCount+1, ...], etc.
+  const createWorker = (workerId: number): Promise<void> => {
+    return (async () => {
+      for (let index = workerId; index < itemCount; index += workerCount) {
+        const item = itemsCopy[index];
+        if (item !== undefined) {
+          results[index] = await operation(item, index);
+        }
+      }
+    })();
+  };
+  
+  // Start all workers with their pre-assigned index ranges
+  const workers: Promise<void>[] = [];
+  for (let i = 0; i < workerCount; i++) {
+    workers.push(createWorker(i));
+  }
+  
+  await Promise.all(workers);
+  return results;
 }

@@ -10,45 +10,52 @@ import { BaseStorageDriver } from './base.driver.js';
 import { FileUploadResult, PresignedUrlResult, StorageConfig, BlobValidationOptions, BlobValidationResult, ListFilesResult, UploadOptions, FileInfo } from '../types/storage.types.js';
 
 /**
- * Azure Blob Storage driver
+ * AzureStorageDriver - Handles file operations with Azure Blob Storage.
  * 
  * Supports three authentication methods:
- * 1. Connection string (recommended for simplicity)
- * 2. Account name + Account key (for more control)
- * 3. Default Azure Credentials / Managed Identity (for Azure-hosted apps)
+ * 1. Connection string (simplest — recommended for getting started)
+ * 2. Account name + Account key (more control)
+ * 3. Managed Identity (when running on Azure — no secrets needed!)
  * 
- * Note: SAS URL generation requires account key (options 1 or 2).
- * Managed Identity (option 3) supports direct upload/download but not presigned URLs.
+ * Important: SAS URL generation requires an account key.
+ * Managed Identity works great for direct uploads but can't create presigned URLs.
  */
 export class AzureStorageDriver extends BaseStorageDriver {
   private blobServiceClient: BlobServiceClient;
-  private containerClient: ContainerClient;
+  protected containerClient: ContainerClient;
   private containerName: string;
-  private accountName: string;
-  private accountKey?: string;
+  protected accountName: string;
+  protected accountKey?: string;
 
   constructor(config: StorageConfig) {
     super(config);
     
-    this.containerName = config.azureContainerName || config.bucketName!;
+    this.containerName = config.azureContainerName || config.bucketName || '';
+    if (!this.containerName) {
+      throw new Error('Azure container name is required. Set AZURE_CONTAINER_NAME or BUCKET_NAME.');
+    }
     this.accountName = '';
     
-    // Initialize Azure client based on available credentials
     if (config.azureConnectionString) {
-      // Option 1: Connection string (simplest)
+      // Method 1: Connection string
       this.blobServiceClient = BlobServiceClient.fromConnectionString(config.azureConnectionString);
-      // Extract account name from connection string
-      const match = config.azureConnectionString.match(/AccountName=([^;]+)/);
-      if (match && match[1]) {
-        this.accountName = match[1];
+      
+      const accountNameMatch = config.azureConnectionString.match(/AccountName=([a-z0-9]{3,24})(?:;|$)/i);
+      if (accountNameMatch && accountNameMatch[1]) {
+        this.accountName = accountNameMatch[1].toLowerCase();
+      } else {
+        throw new Error(
+          'Could not extract AccountName from Azure connection string. ' +
+          'Ensure the connection string contains "AccountName=<name>" where name is 3-24 lowercase letters/numbers.'
+        );
       }
-      // Extract account key for SAS generation
-      const keyMatch = config.azureConnectionString.match(/AccountKey=([^;]+)/);
+      
+      const keyMatch = config.azureConnectionString.match(/AccountKey=([A-Za-z0-9+/=]{20,})(?:;|$)/);
       if (keyMatch && keyMatch[1]) {
         this.accountKey = keyMatch[1];
       }
     } else if (config.azureAccountName && config.azureAccountKey) {
-      // Option 2: Account name + key
+      // Method 2: Account name + key
       this.accountName = config.azureAccountName;
       this.accountKey = config.azureAccountKey;
       const sharedKeyCredential = new StorageSharedKeyCredential(
@@ -60,9 +67,7 @@ export class AzureStorageDriver extends BaseStorageDriver {
         sharedKeyCredential
       );
     } else if (config.azureAccountName) {
-      // Option 3: Default Azure credentials (Managed Identity, Azure CLI, etc.)
-      // This works when deployed on Azure (App Service, Functions, VMs with managed identity)
-      // or locally with Azure CLI authentication
+      // Method 3: Managed Identity
       this.accountName = config.azureAccountName;
       this.blobServiceClient = new BlobServiceClient(
         `https://${config.azureAccountName}.blob.core.windows.net`,
@@ -76,23 +81,23 @@ export class AzureStorageDriver extends BaseStorageDriver {
   }
 
   /**
-   * Upload file to Azure Blob Storage with optional metadata
+   * Uploads a file directly to Azure Blob Storage.
+   * Handles both memory and disk storage from Multer.
+   * 
+   * For large files (>100MB), uses streaming upload to reduce
+   * memory usage and improve reliability.
    */
   async upload(file: Express.Multer.File, options?: UploadOptions): Promise<FileUploadResult> {
     try {
-      // Validate file
       const validationErrors = this.validateFile(file);
       if (validationErrors.length > 0) {
         return this.createErrorResult(validationErrors.join(', '));
       }
 
-      // Generate unique filename
       const fileName = this.generateFileName(file.originalname);
+      const blobPath = this.buildFilePath(fileName);
+      const blockBlobClient = this.containerClient.getBlockBlobClient(blobPath);
       
-      // Get blob client
-      const blockBlobClient = this.containerClient.getBlockBlobClient(fileName);
-      
-      // Build upload options
       const uploadOptions: {
         blobHTTPHeaders: {
           blobContentType: string;
@@ -116,16 +121,34 @@ export class AzureStorageDriver extends BaseStorageDriver {
         uploadOptions.metadata = options.metadata;
       }
 
-      // Get file content (supports both memory and disk storage)
-      const fileContent = this.getFileContent(file);
-
-      // Upload file
-      await blockBlobClient.uploadData(fileContent, uploadOptions);
+      // Use streaming upload for large files to reduce memory usage
+      if (this.shouldUseStreaming(file)) {
+        const fileStream = this.getFileStream(file);
+        const streamOptions: {
+          blobHTTPHeaders: typeof uploadOptions.blobHTTPHeaders;
+          metadata?: Record<string, string>;
+        } = {
+          blobHTTPHeaders: uploadOptions.blobHTTPHeaders,
+        };
+        if (uploadOptions.metadata) {
+          streamOptions.metadata = uploadOptions.metadata;
+        }
+        await blockBlobClient.uploadStream(
+          fileStream,
+          4 * 1024 * 1024, // 4MB buffer size
+          4, // 4 concurrent uploads
+          streamOptions
+        );
+      } else {
+        const fileContent = this.getFileContent(file);
+        await blockBlobClient.uploadData(fileContent, uploadOptions);
+      }
       
-      // Generate file URL
-      const fileUrl = blockBlobClient.url;
+      // Build the public URL with proper encoding
+      const encodedPath = blobPath.split('/').map(segment => encodeURIComponent(segment)).join('/');
+      const fileUrl = `https://${this.accountName}.blob.core.windows.net/${this.containerName}/${encodedPath}`;
       
-      return this.createSuccessResult(fileName, fileUrl);
+      return this.createSuccessResult(blobPath, fileUrl);
     } catch (error) {
       return this.createErrorResult(
         error instanceof Error ? error.message : 'Failed to upload file to Azure'
@@ -134,12 +157,28 @@ export class AzureStorageDriver extends BaseStorageDriver {
   }
 
   /**
-   * Generate presigned upload URL (SAS URL)
-   * @param fileName - Name of the file
-   * @param contentType - MIME type (defaults to 'application/octet-stream' if not provided)
-   * @param _fileSize - File size in bytes (Azure SAS doesn't support size enforcement - informational only)
+   * Creates a SAS URL for uploading directly to Azure.
+   * 
+   * Important: Unlike S3 and GCS, Azure SAS URLs do NOT enforce file size
+   * or content type. Always call validateAndConfirmUpload() after the
+   * client uploads to verify the file is what you expected.
    */
-  async generateUploadUrl(fileName: string, contentType?: string, _fileSize?: number): Promise<PresignedUrlResult> {
+  async generateUploadUrl(fileName: string, contentType?: string, fileSize?: number): Promise<PresignedUrlResult> {
+    // Security: Defense-in-depth validation (StorageManager also validates)
+    if (fileName.includes('..') || fileName.includes('\0')) {
+      return this.createPresignedErrorResult('Invalid fileName: path traversal sequences are not allowed');
+    }
+
+    // Warn developers that fileSize is not enforced by Azure (unlike S3/GCS)
+    if (fileSize !== undefined && process.env['NODE_ENV'] !== 'production') {
+      console.warn(
+        '[express-storage] Azure SAS URLs do not enforce fileSize constraints. ' +
+        'The provided fileSize (%d bytes) is recorded but not enforced at upload time. ' +
+        'Always call validateAndConfirmUpload() with expectedFileSize to verify the uploaded file.',
+        fileSize
+      );
+    }
+    
     try {
       if (!this.accountKey) {
         return this.createPresignedErrorResult(
@@ -149,11 +188,8 @@ export class AzureStorageDriver extends BaseStorageDriver {
 
       const blockBlobClient = this.containerClient.getBlockBlobClient(fileName);
       const expiresOn = new Date(Date.now() + (this.getPresignedUrlExpiry() * 1000));
-      
-      // Default to 'application/octet-stream' if contentType not provided
       const resolvedContentType = contentType || 'application/octet-stream';
       
-      // Build SAS options
       const sasOptions: {
         containerName: string;
         blobName: string;
@@ -163,7 +199,7 @@ export class AzureStorageDriver extends BaseStorageDriver {
       } = {
         containerName: this.containerName,
         blobName: fileName,
-        permissions: BlobSASPermissions.parse('cw'), // create and write
+        permissions: BlobSASPermissions.parse('cw'),
         expiresOn,
         contentType: resolvedContentType,
       };
@@ -184,9 +220,14 @@ export class AzureStorageDriver extends BaseStorageDriver {
   }
 
   /**
-   * Generate presigned view URL (SAS URL)
+   * Creates a SAS URL for downloading/viewing a file.
    */
   async generateViewUrl(fileName: string): Promise<PresignedUrlResult> {
+    // Security: Defense-in-depth validation
+    if (fileName.includes('..') || fileName.includes('\0')) {
+      return this.createPresignedErrorResult('Invalid fileName: path traversal sequences are not allowed');
+    }
+    
     try {
       if (!this.accountKey) {
         return this.createPresignedErrorResult(
@@ -201,7 +242,7 @@ export class AzureStorageDriver extends BaseStorageDriver {
         {
           containerName: this.containerName,
           blobName: fileName,
-          permissions: BlobSASPermissions.parse('r'), // read only
+          permissions: BlobSASPermissions.parse('r'),
           expiresOn,
         },
         new StorageSharedKeyCredential(this.accountName, this.accountKey)
@@ -218,42 +259,43 @@ export class AzureStorageDriver extends BaseStorageDriver {
   }
 
   /**
-   * Delete file from Azure Blob Storage
-   * First verifies file exists, then deletes it
+   * Deletes a file from Azure Blob Storage.
+   * Returns false if the file doesn't exist, throws on real errors.
    */
   async delete(fileName: string): Promise<boolean> {
-    try {
-      const blockBlobClient = this.containerClient.getBlockBlobClient(fileName);
-      
-      // Check if blob exists first
-      const exists = await blockBlobClient.exists();
-      if (!exists) {
-        return false;
-      }
-      
-      await blockBlobClient.delete();
-      return true;
-    } catch {
+    // Security: Defense-in-depth validation
+    if (fileName.includes('..') || fileName.includes('\0')) {
       return false;
     }
+    
+    const blockBlobClient = this.containerClient.getBlockBlobClient(fileName);
+    
+    const exists = await blockBlobClient.exists();
+    if (!exists) {
+      return false;
+    }
+    
+    await blockBlobClient.delete();
+    return true;
   }
 
   /**
-   * Validate and confirm upload - Azure-specific implementation
-   * Checks actual blob properties against expected values
-   * Deletes blob if validation fails
+   * Validates an upload against expected values and deletes invalid files.
+   * 
+   * This is CRITICAL for Azure presigned uploads because Azure doesn't
+   * enforce constraints at the URL level. Someone could upload a 10GB
+   * executable when you expected a 1MB image.
+   * 
+   * Always call this after presigned uploads with your expected values.
    */
   override async validateAndConfirmUpload(
     reference: string, 
     options?: BlobValidationOptions
   ): Promise<BlobValidationResult> {
-    // Default to deleting on failure for backwards compatibility
     const deleteOnFailure = options?.deleteOnFailure !== false;
     
     try {
       const blockBlobClient = this.containerClient.getBlockBlobClient(reference);
-      
-      // Get blob properties
       const properties = await blockBlobClient.getProperties();
       
       const actualContentType = properties.contentType;
@@ -261,13 +303,12 @@ export class AzureStorageDriver extends BaseStorageDriver {
 
       // Validate content type if expected
       if (options?.expectedContentType && actualContentType !== options.expectedContentType) {
-        // Optionally delete the invalid blob
         if (deleteOnFailure) {
           await this.delete(reference);
         }
         const errorResult: BlobValidationResult = {
           success: false,
-          error: `Content type mismatch: expected '${options.expectedContentType}', got '${actualContentType}'${deleteOnFailure ? ' (blob deleted)' : ' (blob kept for inspection)'}`,
+          error: `Content type mismatch: expected '${options.expectedContentType}', got '${actualContentType}'${deleteOnFailure ? ' (file deleted)' : ' (file kept for inspection)'}`,
         };
         if (actualContentType) errorResult.actualContentType = actualContentType;
         if (actualFileSize !== undefined) errorResult.actualFileSize = actualFileSize;
@@ -276,20 +317,18 @@ export class AzureStorageDriver extends BaseStorageDriver {
 
       // Validate file size if expected
       if (options?.expectedFileSize !== undefined && actualFileSize !== options.expectedFileSize) {
-        // Optionally delete the invalid blob
         if (deleteOnFailure) {
           await this.delete(reference);
         }
         const errorResult: BlobValidationResult = {
           success: false,
-          error: `File size mismatch: expected ${options.expectedFileSize} bytes, got ${actualFileSize} bytes${deleteOnFailure ? ' (blob deleted)' : ' (blob kept for inspection)'}`,
+          error: `File size mismatch: expected ${options.expectedFileSize} bytes, got ${actualFileSize} bytes${deleteOnFailure ? ' (file deleted)' : ' (file kept for inspection)'}`,
         };
         if (actualContentType) errorResult.actualContentType = actualContentType;
         if (actualFileSize !== undefined) errorResult.actualFileSize = actualFileSize;
         return errorResult;
       }
 
-      // Validation passed - generate view URL
       const viewResult = await this.generateViewUrl(reference);
 
       const successResult: BlobValidationResult = {
@@ -311,7 +350,7 @@ export class AzureStorageDriver extends BaseStorageDriver {
   }
 
   /**
-   * List files in Azure container with optional prefix and pagination
+   * Lists files in the container with optional prefix filtering and pagination.
    */
   async listFiles(
     prefix?: string,
@@ -319,22 +358,25 @@ export class AzureStorageDriver extends BaseStorageDriver {
     continuationToken?: string
   ): Promise<ListFilesResult> {
     try {
+      const validatedMaxResults = Math.floor(Math.max(1, Math.min(
+        Number.isNaN(maxResults) ? 1000 : maxResults, 
+        1000
+      )));
+      
       const files: FileInfo[] = [];
       let nextToken: string | undefined;
 
-      // Build options conditionally
       const listOptions: { prefix?: string } = {};
       if (prefix) listOptions.prefix = prefix;
 
       const pageOptions: { maxPageSize: number; continuationToken?: string } = {
-        maxPageSize: maxResults,
+        maxPageSize: validatedMaxResults,
       };
       if (continuationToken) pageOptions.continuationToken = continuationToken;
 
       const iterator = this.containerClient.listBlobsFlat(listOptions)
         .byPage(pageOptions);
 
-      // Get first page only
       const page = await iterator.next();
       
       if (!page.done && page.value) {
@@ -374,15 +416,18 @@ export class AzureStorageDriver extends BaseStorageDriver {
 }
 
 /**
- * Azure Blob Storage presigned driver
- * Requires account key for SAS URL generation (Managed Identity is not supported)
+ * AzurePresignedStorageDriver - Azure driver that returns SAS URLs from upload().
+ * 
+ * Use this when you want clients to upload directly to Azure without
+ * the file passing through your server.
+ * 
+ * Critical: Always call validateAndConfirmUpload() after clients upload!
+ * Azure doesn't enforce any constraints on SAS URLs.
  */
 export class AzurePresignedStorageDriver extends AzureStorageDriver {
   constructor(config: StorageConfig) {
     super(config);
     
-    // Verify account key is available for SAS generation
-    // This check happens at initialization to fail fast rather than at runtime
     if (!this.hasAccountKey()) {
       throw new Error(
         'AzurePresignedStorageDriver requires an account key for SAS URL generation. ' +
@@ -392,42 +437,43 @@ export class AzurePresignedStorageDriver extends AzureStorageDriver {
     }
   }
 
-  /**
-   * Check if account key is available for SAS generation
-   */
   private hasAccountKey(): boolean {
-    // accountKey is set in parent constructor from connection string or explicit key
-    return this['accountKey'] !== undefined;
+    return this.accountKey !== undefined;
   }
 
   /**
-   * Override upload to return presigned URL instead of direct upload
-   * Note: Azure SAS URLs don't enforce content type or file size at URL level
-   * Use validateAndConfirmUpload() after upload for validation
+   * Instead of uploading the file, returns a SAS URL for the client to use.
+   * 
+   * The returned fileUrl is the SAS upload URL.
+   * After the client uploads, use validateAndConfirmUpload() to verify
+   * the file and get a view URL.
+   * 
+   * Note: The `options` parameter (metadata, cacheControl, etc.) is NOT applied
+   * when using presigned uploads. These options must be set by the client when
+   * making the actual upload request to Azure, or configured via container settings.
+   * For server-side uploads with full options support, use the regular 'azure' driver.
    */
-  override async upload(file: Express.Multer.File): Promise<FileUploadResult> {
+  override async upload(file: Express.Multer.File, _options?: UploadOptions): Promise<FileUploadResult> {
     try {
-      // Validate file
       const validationErrors = this.validateFile(file);
       if (validationErrors.length > 0) {
         return this.createErrorResult(validationErrors.join(', '));
       }
 
-      // Generate unique filename
       const fileName = this.generateFileName(file.originalname);
+      const filePath = this.buildFilePath(fileName);
       
-      // Generate presigned upload URL with content type (informational for Azure)
       const presignedResult = await this.generateUploadUrl(
-        fileName,
-        file.mimetype,  // Pass content type (informational only for Azure)
-        file.size       // Pass file size (informational only for Azure)
+        filePath,
+        file.mimetype,
+        file.size
       );
       
       if (!presignedResult.success) {
         return this.createErrorResult(presignedResult.error || 'Failed to generate presigned URL');
       }
 
-      return this.createSuccessResult(fileName, presignedResult.uploadUrl);
+      return this.createSuccessResult(filePath, presignedResult.uploadUrl);
     } catch (error) {
       return this.createErrorResult(
         error instanceof Error ? error.message : 'Failed to generate presigned URL'

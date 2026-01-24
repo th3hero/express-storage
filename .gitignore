@@ -9,6 +9,11 @@ lerna-debug.log*
 # Diagnostic reports (https://nodejs.org/api/report.html)
 report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
 
+# build is nog going to be pushed to the repo
+dist/*
+public/*
+!public/.gitkeep
+
 # Runtime data
 pids
 *.pid
