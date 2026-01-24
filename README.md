@@ -5,8 +5,12 @@
 Stop writing separate upload code for every storage provider. Express Storage gives you a single, secure interface that works with AWS S3, Google Cloud Storage, Azure Blob Storage, and local disk. Switch providers by changing one environment variable. No code changes required.
 
 [![npm version](https://img.shields.io/npm/v/express-storage.svg)](https://www.npmjs.com/package/express-storage)
+[![npm downloads](https://img.shields.io/npm/dm/express-storage.svg)](https://www.npmjs.com/package/express-storage)
+[![npm bundle size](https://img.shields.io/bundlephobia/minzip/express-storage)](https://bundlephobia.com/package/express-storage)
 [![TypeScript](https://img.shields.io/badge/TypeScript-Ready-blue.svg)](https://www.typescriptlang.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
+[![Node.js Version](https://img.shields.io/node/v/express-storage)](https://nodejs.org)
+[![GitHub stars](https://img.shields.io/github/stars/th3hero/express-storage?style=social)](https://github.com/th3hero/express-storage)
 
 ---
 
