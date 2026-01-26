@@ -22,7 +22,6 @@ import {
   generateUniqueFileName,
 } from '../src/utils/file.utils.js';
 import {
-  createMockFile,
   createMockJpegFile,
   createMockExeFile,
   PATH_TRAVERSAL_CASES,

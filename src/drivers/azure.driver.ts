@@ -165,7 +165,15 @@ export class AzureStorageDriver extends BaseStorageDriver {
    */
   async generateUploadUrl(fileName: string, contentType?: string, fileSize?: number): Promise<PresignedUrlResult> {
     // Security: Defense-in-depth validation (StorageManager also validates)
-    if (fileName.includes('..') || fileName.includes('\0')) {
+    // Decode URL-encoded characters first to catch encoded traversal attempts like %2e%2e%2f
+    let decodedFileName: string;
+    try {
+      decodedFileName = decodeURIComponent(fileName);
+    } catch {
+      return this.createPresignedErrorResult('Invalid fileName: malformed URL encoding');
+    }
+    
+    if (decodedFileName.includes('..') || decodedFileName.includes('\0')) {
       return this.createPresignedErrorResult('Invalid fileName: path traversal sequences are not allowed');
     }
 
@@ -186,7 +194,7 @@ export class AzureStorageDriver extends BaseStorageDriver {
         );
       }
 
-      const blockBlobClient = this.containerClient.getBlockBlobClient(fileName);
+      const blockBlobClient = this.containerClient.getBlockBlobClient(decodedFileName);
       const expiresOn = new Date(Date.now() + (this.getPresignedUrlExpiry() * 1000));
       const resolvedContentType = contentType || 'application/octet-stream';
       
@@ -198,7 +206,7 @@ export class AzureStorageDriver extends BaseStorageDriver {
         contentType: string;
       } = {
         containerName: this.containerName,
-        blobName: fileName,
+        blobName: decodedFileName,
         permissions: BlobSASPermissions.parse('cw'),
         expiresOn,
         contentType: resolvedContentType,
@@ -224,7 +232,15 @@ export class AzureStorageDriver extends BaseStorageDriver {
    */
   async generateViewUrl(fileName: string): Promise<PresignedUrlResult> {
     // Security: Defense-in-depth validation
-    if (fileName.includes('..') || fileName.includes('\0')) {
+    // Decode URL-encoded characters first to catch encoded traversal attempts like %2e%2e%2f
+    let decodedFileName: string;
+    try {
+      decodedFileName = decodeURIComponent(fileName);
+    } catch {
+      return this.createPresignedErrorResult('Invalid fileName: malformed URL encoding');
+    }
+    
+    if (decodedFileName.includes('..') || decodedFileName.includes('\0')) {
       return this.createPresignedErrorResult('Invalid fileName: path traversal sequences are not allowed');
     }
     
@@ -235,13 +251,13 @@ export class AzureStorageDriver extends BaseStorageDriver {
         );
       }
 
-      const blockBlobClient = this.containerClient.getBlockBlobClient(fileName);
+      const blockBlobClient = this.containerClient.getBlockBlobClient(decodedFileName);
       const expiresOn = new Date(Date.now() + (this.getPresignedUrlExpiry() * 1000));
       
       const sasToken = generateBlobSASQueryParameters(
         {
           containerName: this.containerName,
-          blobName: fileName,
+          blobName: decodedFileName,
           permissions: BlobSASPermissions.parse('r'),
           expiresOn,
         },
@@ -264,11 +280,19 @@ export class AzureStorageDriver extends BaseStorageDriver {
    */
   async delete(fileName: string): Promise<boolean> {
     // Security: Defense-in-depth validation
-    if (fileName.includes('..') || fileName.includes('\0')) {
+    // Decode URL-encoded characters first to catch encoded traversal attempts like %2e%2e%2f
+    let decodedFileName: string;
+    try {
+      decodedFileName = decodeURIComponent(fileName);
+    } catch {
       return false;
     }
     
-    const blockBlobClient = this.containerClient.getBlockBlobClient(fileName);
+    if (decodedFileName.includes('..') || decodedFileName.includes('\0')) {
+      return false;
+    }
+    
+    const blockBlobClient = this.containerClient.getBlockBlobClient(decodedFileName);
     
     const exists = await blockBlobClient.exists();
     if (!exists) {

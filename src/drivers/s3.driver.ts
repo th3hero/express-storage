@@ -184,7 +184,15 @@ export class S3StorageDriver extends BaseStorageDriver {
    */
   async generateUploadUrl(fileName: string, contentType?: string, fileSize?: number): Promise<PresignedUrlResult> {
     // Security: Defense-in-depth validation (StorageManager also validates)
-    if (fileName.includes('..') || fileName.includes('\0')) {
+    // Decode URL-encoded characters first to catch encoded traversal attempts like %2e%2e%2f
+    let decodedFileName: string;
+    try {
+      decodedFileName = decodeURIComponent(fileName);
+    } catch {
+      return this.createPresignedErrorResult('Invalid fileName: malformed URL encoding');
+    }
+    
+    if (decodedFileName.includes('..') || decodedFileName.includes('\0')) {
       return this.createPresignedErrorResult('Invalid fileName: path traversal sequences are not allowed');
     }
     
@@ -198,7 +206,7 @@ export class S3StorageDriver extends BaseStorageDriver {
         ContentLength?: number;
       } = {
         Bucket: this.bucketName,
-        Key: fileName,
+        Key: decodedFileName,
         ContentType: resolvedContentType,
       };
 
@@ -226,14 +234,22 @@ export class S3StorageDriver extends BaseStorageDriver {
    */
   async generateViewUrl(fileName: string): Promise<PresignedUrlResult> {
     // Security: Defense-in-depth validation
-    if (fileName.includes('..') || fileName.includes('\0')) {
+    // Decode URL-encoded characters first to catch encoded traversal attempts like %2e%2e%2f
+    let decodedFileName: string;
+    try {
+      decodedFileName = decodeURIComponent(fileName);
+    } catch {
+      return this.createPresignedErrorResult('Invalid fileName: malformed URL encoding');
+    }
+    
+    if (decodedFileName.includes('..') || decodedFileName.includes('\0')) {
       return this.createPresignedErrorResult('Invalid fileName: path traversal sequences are not allowed');
     }
     
     try {
       const getCommand = new GetObjectCommand({
         Bucket: this.bucketName,
-        Key: fileName,
+        Key: decodedFileName,
       });
 
       const viewUrl = await getSignedUrl(this.s3Client, getCommand, {
@@ -254,13 +270,21 @@ export class S3StorageDriver extends BaseStorageDriver {
    */
   async delete(fileName: string): Promise<boolean> {
     // Security: Defense-in-depth validation
-    if (fileName.includes('..') || fileName.includes('\0')) {
+    // Decode URL-encoded characters first to catch encoded traversal attempts like %2e%2e%2f
+    let decodedFileName: string;
+    try {
+      decodedFileName = decodeURIComponent(fileName);
+    } catch {
+      return false;
+    }
+    
+    if (decodedFileName.includes('..') || decodedFileName.includes('\0')) {
       return false;
     }
     
     const headCommand = new HeadObjectCommand({
       Bucket: this.bucketName,
-      Key: fileName,
+      Key: decodedFileName,
     });
     
     try {
@@ -277,7 +301,7 @@ export class S3StorageDriver extends BaseStorageDriver {
     
     const deleteCommand = new DeleteObjectCommand({
       Bucket: this.bucketName,
-      Key: fileName,
+      Key: decodedFileName,
     });
 
     await this.s3Client.send(deleteCommand);

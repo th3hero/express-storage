@@ -1,7 +1,7 @@
 {
   "name": "express-storage",
   "version": "1.1.4",
-  "description": "Secure, unified file upload and cloud storage management for Express.js. One API for AWS S3, Google Cloud Storage, Azure Blob Storage, and local disk. Built-in security with path traversal prevention, file validation, presigned URLs, and automatic filename sanitization. Switch storage providers with zero code changes — just update your environment variables.",
+  "description": "One API for all cloud storage: AWS S3, Google Cloud, Azure & local disk. Secure Express.js file uploads with presigned URLs, validation, and zero-config provider switching. Built-in path traversal prevention, file validation, and automatic filename sanitization.",
   "homepage": "https://github.com/th3hero/express-storage#readme",
   "bugs": {
     "url": "https://github.com/th3hero/express-storage/issues"
@@ -58,7 +58,23 @@
     "multi-cloud",
     "hybrid-cloud",
     "file-security",
-    "upload-security"
+    "upload-security",
+    "multipart-upload",
+    "file-upload-middleware",
+    "express-middleware",
+    "multer-alternative",
+    "unified-storage",
+    "storage-abstraction",
+    "file-streaming",
+    "resumable-upload",
+    "cloud-agnostic",
+    "provider-agnostic",
+    "s3-upload",
+    "gcs-upload",
+    "azure-upload",
+    "bucket-storage",
+    "multer-s3-alternative",
+    "cloud-file-storage"
   ],
   "scripts": {
     "build": "tsc",

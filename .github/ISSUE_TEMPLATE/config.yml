@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Documentation
+    url: https://github.com/th3hero/express-storage#readme
+    about: Check the README for usage examples and API documentation
+  - name: Stack Overflow
+    url: https://stackoverflow.com/questions/tagged/express-storage
+    about: Ask questions on Stack Overflow with the express-storage tag

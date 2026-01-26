@@ -5,7 +5,7 @@
  * Covers: filename generation, sanitization, validation, formatting, retry logic, concurrency
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import {
   generateUniqueFileName,
   sanitizeFileName,

@@ -112,6 +112,10 @@ export class GCSStorageDriver extends BaseStorageDriver {
         resumable: true, // Enable resumable uploads for reliability
       });
 
+      // Handle errors from the source stream (fileStream) explicitly
+      // to ensure they propagate and don't get silently dropped
+      fileStream.on('error', reject);
+
       fileStream
         .pipe(writeStream)
         .on('error', reject)
@@ -130,12 +134,20 @@ export class GCSStorageDriver extends BaseStorageDriver {
    */
   async generateUploadUrl(fileName: string, contentType?: string, fileSize?: number): Promise<PresignedUrlResult> {
     // Security: Defense-in-depth validation (StorageManager also validates)
-    if (fileName.includes('..') || fileName.includes('\0')) {
+    // Decode URL-encoded characters first to catch encoded traversal attempts like %2e%2e%2f
+    let decodedFileName: string;
+    try {
+      decodedFileName = decodeURIComponent(fileName);
+    } catch {
+      return this.createPresignedErrorResult('Invalid fileName: malformed URL encoding');
+    }
+    
+    if (decodedFileName.includes('..') || decodedFileName.includes('\0')) {
       return this.createPresignedErrorResult('Invalid fileName: path traversal sequences are not allowed');
     }
     
     try {
-      const gcsFile = this.bucket.file(fileName);
+      const gcsFile = this.bucket.file(decodedFileName);
       const resolvedContentType = contentType || 'application/octet-stream';
       const expiresOn = new Date(Date.now() + (this.getPresignedUrlExpiry() * 1000));
       
@@ -174,12 +186,20 @@ export class GCSStorageDriver extends BaseStorageDriver {
    */
   async generateViewUrl(fileName: string): Promise<PresignedUrlResult> {
     // Security: Defense-in-depth validation
-    if (fileName.includes('..') || fileName.includes('\0')) {
+    // Decode URL-encoded characters first to catch encoded traversal attempts like %2e%2e%2f
+    let decodedFileName: string;
+    try {
+      decodedFileName = decodeURIComponent(fileName);
+    } catch {
+      return this.createPresignedErrorResult('Invalid fileName: malformed URL encoding');
+    }
+    
+    if (decodedFileName.includes('..') || decodedFileName.includes('\0')) {
       return this.createPresignedErrorResult('Invalid fileName: path traversal sequences are not allowed');
     }
     
     try {
-      const gcsFile = this.bucket.file(fileName);
+      const gcsFile = this.bucket.file(decodedFileName);
       const expiresOn = new Date(Date.now() + (this.getPresignedUrlExpiry() * 1000));
       
       const [viewUrl] = await gcsFile.getSignedUrl({
@@ -202,11 +222,19 @@ export class GCSStorageDriver extends BaseStorageDriver {
    */
   async delete(fileName: string): Promise<boolean> {
     // Security: Defense-in-depth validation
-    if (fileName.includes('..') || fileName.includes('\0')) {
+    // Decode URL-encoded characters first to catch encoded traversal attempts like %2e%2e%2f
+    let decodedFileName: string;
+    try {
+      decodedFileName = decodeURIComponent(fileName);
+    } catch {
       return false;
     }
     
-    const gcsFile = this.bucket.file(fileName);
+    if (decodedFileName.includes('..') || decodedFileName.includes('\0')) {
+      return false;
+    }
+    
+    const gcsFile = this.bucket.file(decodedFileName);
     
     const [exists] = await gcsFile.exists();
     if (!exists) {
