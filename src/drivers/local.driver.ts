@@ -435,7 +435,7 @@ export class LocalStorageDriver extends BaseStorageDriver {
       }
       
       const baseDir = path.resolve(this.basePath);
-      const targetPath = path.join(baseDir, reference);
+      const targetPath = path.join(baseDir, decodedReference);
       const resolvedPath = path.resolve(targetPath);
       
       // Make sure we're not escaping the base directory
@@ -488,7 +488,7 @@ export class LocalStorageDriver extends BaseStorageDriver {
       return null;
     }
     
-    const directPath = path.join(baseDir, reference);
+    const directPath = path.join(baseDir, decodedReference);
     const resolvedPath = path.resolve(directPath);
     
     if (!resolvedPath.startsWith(baseDir + path.sep) && resolvedPath !== baseDir) {
@@ -566,6 +566,9 @@ export class LocalStorageDriver extends BaseStorageDriver {
       // We collect a bit more than needed for accurate hasMore detection
       const MAX_COLLECT = validatedMaxResults + 1;
       
+      // Use decoded prefix for file matching
+      const effectivePrefix = decodedPrefix;
+      
       // Skip directories that can't possibly contain matching files
       const couldContainPrefix = (dirRelativePath: string, targetPrefix: string): boolean => {
         if (!targetPrefix) return true;
@@ -594,7 +597,7 @@ export class LocalStorageDriver extends BaseStorageDriver {
           return false;
         }
         
-        if (prefix && !couldContainPrefix(dirRelativePath, prefix)) {
+        if (effectivePrefix && !couldContainPrefix(dirRelativePath, effectivePrefix)) {
           return true;
         }
         
@@ -649,7 +652,7 @@ export class LocalStorageDriver extends BaseStorageDriver {
               return false;
             }
           } else if (stat.isFile()) {
-            if (prefix && !relativePath.startsWith(prefix)) {
+            if (effectivePrefix && !relativePath.startsWith(effectivePrefix)) {
               continue;
             }
             

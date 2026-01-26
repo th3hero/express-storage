@@ -206,7 +206,7 @@ export class S3StorageDriver extends BaseStorageDriver {
         ContentLength?: number;
       } = {
         Bucket: this.bucketName,
-        Key: fileName,
+        Key: decodedFileName,
         ContentType: resolvedContentType,
       };
 
@@ -249,7 +249,7 @@ export class S3StorageDriver extends BaseStorageDriver {
     try {
       const getCommand = new GetObjectCommand({
         Bucket: this.bucketName,
-        Key: fileName,
+        Key: decodedFileName,
       });
 
       const viewUrl = await getSignedUrl(this.s3Client, getCommand, {
@@ -284,7 +284,7 @@ export class S3StorageDriver extends BaseStorageDriver {
     
     const headCommand = new HeadObjectCommand({
       Bucket: this.bucketName,
-      Key: fileName,
+      Key: decodedFileName,
     });
     
     try {
@@ -301,7 +301,7 @@ export class S3StorageDriver extends BaseStorageDriver {
     
     const deleteCommand = new DeleteObjectCommand({
       Bucket: this.bucketName,
-      Key: fileName,
+      Key: decodedFileName,
     });
 
     await this.s3Client.send(deleteCommand);
