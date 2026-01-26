@@ -194,7 +194,7 @@ export class AzureStorageDriver extends BaseStorageDriver {
         );
       }
 
-      const blockBlobClient = this.containerClient.getBlockBlobClient(fileName);
+      const blockBlobClient = this.containerClient.getBlockBlobClient(decodedFileName);
       const expiresOn = new Date(Date.now() + (this.getPresignedUrlExpiry() * 1000));
       const resolvedContentType = contentType || 'application/octet-stream';
       
@@ -206,7 +206,7 @@ export class AzureStorageDriver extends BaseStorageDriver {
         contentType: string;
       } = {
         containerName: this.containerName,
-        blobName: fileName,
+        blobName: decodedFileName,
         permissions: BlobSASPermissions.parse('cw'),
         expiresOn,
         contentType: resolvedContentType,
@@ -251,13 +251,13 @@ export class AzureStorageDriver extends BaseStorageDriver {
         );
       }
 
-      const blockBlobClient = this.containerClient.getBlockBlobClient(fileName);
+      const blockBlobClient = this.containerClient.getBlockBlobClient(decodedFileName);
       const expiresOn = new Date(Date.now() + (this.getPresignedUrlExpiry() * 1000));
       
       const sasToken = generateBlobSASQueryParameters(
         {
           containerName: this.containerName,
-          blobName: fileName,
+          blobName: decodedFileName,
           permissions: BlobSASPermissions.parse('r'),
           expiresOn,
         },
@@ -292,7 +292,7 @@ export class AzureStorageDriver extends BaseStorageDriver {
       return false;
     }
     
-    const blockBlobClient = this.containerClient.getBlockBlobClient(fileName);
+    const blockBlobClient = this.containerClient.getBlockBlobClient(decodedFileName);
     
     const exists = await blockBlobClient.exists();
     if (!exists) {

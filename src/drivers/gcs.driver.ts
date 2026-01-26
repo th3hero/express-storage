@@ -147,7 +147,7 @@ export class GCSStorageDriver extends BaseStorageDriver {
     }
     
     try {
-      const gcsFile = this.bucket.file(fileName);
+      const gcsFile = this.bucket.file(decodedFileName);
       const resolvedContentType = contentType || 'application/octet-stream';
       const expiresOn = new Date(Date.now() + (this.getPresignedUrlExpiry() * 1000));
       
@@ -199,7 +199,7 @@ export class GCSStorageDriver extends BaseStorageDriver {
     }
     
     try {
-      const gcsFile = this.bucket.file(fileName);
+      const gcsFile = this.bucket.file(decodedFileName);
       const expiresOn = new Date(Date.now() + (this.getPresignedUrlExpiry() * 1000));
       
       const [viewUrl] = await gcsFile.getSignedUrl({
@@ -234,7 +234,7 @@ export class GCSStorageDriver extends BaseStorageDriver {
       return false;
     }
     
-    const gcsFile = this.bucket.file(fileName);
+    const gcsFile = this.bucket.file(decodedFileName);
     
     const [exists] = await gcsFile.exists();
     if (!exists) {
