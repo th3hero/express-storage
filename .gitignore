@@ -84,6 +84,7 @@ web_modules/
 !package.json
 !package-lock.json
 !tsconfig.json
+!tsconfig.*.json
 
 # Local uploads (for testing)
 public/uploads/
