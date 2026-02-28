@@ -62,7 +62,7 @@ describe('LocalStorageDriver', () => {
       const result = await driver.upload(file);
 
       expect(result.success).toBe(true);
-      expect(result.fileName).toBeDefined();
+      expect(result.reference).toBeDefined();
       expect(result.fileUrl).toBeDefined();
     });
 
@@ -93,7 +93,7 @@ describe('LocalStorageDriver', () => {
 
       expect(result1.success).toBe(true);
       expect(result2.success).toBe(true);
-      expect(result1.fileName).not.toBe(result2.fileName);
+      expect(result1.reference).not.toBe(result2.reference);
     });
 
     it('should preserve file extension', async () => {
@@ -103,7 +103,7 @@ describe('LocalStorageDriver', () => {
       const result = await driver.upload(file);
 
       expect(result.success).toBe(true);
-      expect(result.fileName).toContain('.jpg');
+      expect(result.reference).toContain('.jpg');
     });
 
     it('should handle JPEG file', async () => {
@@ -150,7 +150,7 @@ describe('LocalStorageDriver', () => {
         createMockFile({ originalname: 'file3.txt' }),
       ];
 
-      const results = await driver.uploadMultiple(files);
+      const results = await Promise.all(files.map(f => driver.upload(f)));
 
       expect(results).toHaveLength(3);
       expect(results.every(r => r.success)).toBe(true);
@@ -260,9 +260,7 @@ describe('LocalStorageDriver', () => {
     });
 
     it('should return empty array for empty files array', async () => {
-      const driver = createDriver();
-
-      const results = await driver.uploadMultiple([]);
+      const results = await Promise.all(([] as Express.Multer.File[]).map(f => createDriver().upload(f)));
 
       expect(results).toEqual([]);
     });
@@ -278,7 +276,7 @@ describe('LocalStorageDriver', () => {
 
       for (const maliciousPath of PATH_TRAVERSAL_CASES) {
         const result = await driver.delete(maliciousPath);
-        expect(result).toBe(false);
+        expect(result.success).toBe(false);
       }
     });
 
@@ -311,7 +309,7 @@ describe('LocalStorageDriver', () => {
       // Try to delete via relative path
       const deleted = await driver.delete('../outside-file.txt');
 
-      expect(deleted).toBe(false);
+      expect(deleted.success).toBe(false);
       expect(fs.existsSync(outsidePath)).toBe(true);
 
       // Cleanup
@@ -338,7 +336,7 @@ describe('LocalStorageDriver', () => {
       // Try to delete the symlink
       const deleted = await driver.delete('symlink.txt');
 
-      expect(deleted).toBe(false);
+      expect(deleted.success).toBe(false);
       expect(fs.existsSync(symlink)).toBe(true);
       expect(fs.existsSync(realFile)).toBe(true);
     });
@@ -390,7 +388,7 @@ describe('LocalStorageDriver', () => {
       const uploadResult = await driver.upload(file);
       expect(uploadResult.success).toBe(true);
 
-      const validation = await driver.validateAndConfirmUpload(uploadResult.fileName!);
+      const validation = await driver.validateAndConfirmUpload(uploadResult.reference!);
 
       expect(validation.success).toBe(true);
       expect(validation.actualContentType).toBe('image/jpeg');
@@ -403,7 +401,7 @@ describe('LocalStorageDriver', () => {
       const uploadResult = await driver.upload(file);
       expect(uploadResult.success).toBe(true);
 
-      const validation = await driver.validateAndConfirmUpload(uploadResult.fileName!);
+      const validation = await driver.validateAndConfirmUpload(uploadResult.reference!);
 
       expect(validation.success).toBe(true);
       expect(validation.actualContentType).toBe('image/png');
@@ -416,7 +414,7 @@ describe('LocalStorageDriver', () => {
       const uploadResult = await driver.upload(file);
       expect(uploadResult.success).toBe(true);
 
-      const validation = await driver.validateAndConfirmUpload(uploadResult.fileName!);
+      const validation = await driver.validateAndConfirmUpload(uploadResult.reference!);
 
       expect(validation.success).toBe(true);
       expect(validation.actualContentType).toBe('application/pdf');
@@ -430,7 +428,7 @@ describe('LocalStorageDriver', () => {
       const uploadResult = await driver.upload(file);
       expect(uploadResult.success).toBe(true);
 
-      const validation = await driver.validateAndConfirmUpload(uploadResult.fileName!);
+      const validation = await driver.validateAndConfirmUpload(uploadResult.reference!);
 
       expect(validation.success).toBe(true);
       // Magic bytes should detect exe, not jpg
@@ -449,7 +447,7 @@ describe('LocalStorageDriver', () => {
       const uploadResult = await driver.upload(file);
       expect(uploadResult.success).toBe(true);
 
-      const validation = await driver.validateAndConfirmUpload(uploadResult.fileName!);
+      const validation = await driver.validateAndConfirmUpload(uploadResult.reference!);
 
       expect(validation.success).toBe(true);
       expect(validation.actualContentType).toBe('application/json');
@@ -468,10 +466,10 @@ describe('LocalStorageDriver', () => {
       const uploadResult = await driver.upload(file);
       expect(uploadResult.success).toBe(true);
 
-      const validation = await driver.validateAndConfirmUpload(uploadResult.fileName!);
+      const validation = await driver.validateAndConfirmUpload(uploadResult.reference!);
 
       expect(validation.success).toBe(true);
-      expect(validation.reference).toBe(uploadResult.fileName);
+      expect(validation.reference).toBe(uploadResult.reference);
       expect(validation.viewUrl).toBeDefined();
       expect(validation.actualFileSize).toBeGreaterThan(0);
     });
@@ -482,7 +480,7 @@ describe('LocalStorageDriver', () => {
 
       const uploadResult = await driver.upload(file);
 
-      const validation = await driver.validateAndConfirmUpload(uploadResult.fileName!, {
+      const validation = await driver.validateAndConfirmUpload(uploadResult.reference!, {
         expectedContentType: 'image/jpeg',
       });
 
@@ -495,7 +493,7 @@ describe('LocalStorageDriver', () => {
 
       const uploadResult = await driver.upload(file);
 
-      const validation = await driver.validateAndConfirmUpload(uploadResult.fileName!, {
+      const validation = await driver.validateAndConfirmUpload(uploadResult.reference!, {
         expectedContentType: 'image/png',
       });
 
@@ -510,7 +508,7 @@ describe('LocalStorageDriver', () => {
 
       const uploadResult = await driver.upload(file);
 
-      const validation = await driver.validateAndConfirmUpload(uploadResult.fileName!, {
+      const validation = await driver.validateAndConfirmUpload(uploadResult.reference!, {
         expectedFileSize: buffer.length,
       });
 
@@ -523,7 +521,7 @@ describe('LocalStorageDriver', () => {
 
       const uploadResult = await driver.upload(file);
 
-      const validation = await driver.validateAndConfirmUpload(uploadResult.fileName!, {
+      const validation = await driver.validateAndConfirmUpload(uploadResult.reference!, {
         expectedFileSize: 1000,
       });
 
@@ -536,7 +534,7 @@ describe('LocalStorageDriver', () => {
       const file = createMockJpegFile();
 
       const uploadResult = await driver.upload(file);
-      const filePath = uploadResult.fileName!;
+      const filePath = uploadResult.reference!;
 
       await driver.validateAndConfirmUpload(filePath, {
         expectedContentType: 'image/png', // Wrong type
@@ -552,7 +550,7 @@ describe('LocalStorageDriver', () => {
       const file = createMockJpegFile();
 
       const uploadResult = await driver.upload(file);
-      const filePath = uploadResult.fileName!;
+      const filePath = uploadResult.reference!;
 
       await driver.validateAndConfirmUpload(filePath, {
         expectedContentType: 'image/png',
@@ -586,9 +584,9 @@ describe('LocalStorageDriver', () => {
       const uploadResult = await driver.upload(file);
       expect(uploadResult.success).toBe(true);
 
-      const deleted = await driver.delete(uploadResult.fileName!);
+      const deleted = await driver.delete(uploadResult.reference!);
 
-      expect(deleted).toBe(true);
+      expect(deleted.success).toBe(true);
     });
 
     it('should return false for non-existent file', async () => {
@@ -596,7 +594,7 @@ describe('LocalStorageDriver', () => {
 
       const deleted = await driver.delete('non-existent.txt');
 
-      expect(deleted).toBe(false);
+      expect(deleted.success).toBe(false);
     });
 
     it('should not delete directories', async () => {
@@ -606,7 +604,7 @@ describe('LocalStorageDriver', () => {
 
       const deleted = await driver.delete('subdir');
 
-      expect(deleted).toBe(false);
+      expect(deleted.success).toBe(false);
     });
 
     it('should delete multiple files', async () => {
@@ -615,18 +613,59 @@ describe('LocalStorageDriver', () => {
       const result1 = await driver.upload(createMockFile({ originalname: 'file1.txt' }));
       const result2 = await driver.upload(createMockFile({ originalname: 'file2.txt' }));
 
-      const results = await driver.deleteMultiple([result1.fileName!, result2.fileName!]);
+      const results = await Promise.all([
+        driver.delete(result1.reference!),
+        driver.delete(result2.reference!),
+      ]);
 
       expect(results).toHaveLength(2);
       expect(results.every(r => r.success)).toBe(true);
     });
+  });
 
-    it('should return empty array for empty delete array', async () => {
+  // ============================================================================
+  // FILE METADATA TESTS
+  // ============================================================================
+
+  describe('File Metadata', () => {
+    it('should return metadata for uploaded file', async () => {
       const driver = createDriver();
+      const file = createMockJpegFile();
+      const uploadResult = await driver.upload(file);
+      expect(uploadResult.success).toBe(true);
 
-      const results = await driver.deleteMultiple([]);
+      const metadata = await driver.getMetadata(uploadResult.reference!);
 
-      expect(results).toEqual([]);
+      expect(metadata).not.toBeNull();
+      expect(metadata!.name).toBe(uploadResult.reference);
+      expect(metadata!.size).toBeGreaterThan(0);
+      expect(metadata!.contentType).toBe('image/jpeg');
+      expect(metadata!.lastModified).toBeInstanceOf(Date);
+    });
+
+    it('should return null for non-existent file', async () => {
+      const driver = createDriver();
+      const metadata = await driver.getMetadata('non-existent.txt');
+      expect(metadata).toBeNull();
+    });
+
+    it('should detect content type via magic bytes', async () => {
+      const driver = createDriver();
+      const file = createMockPdfFile();
+      const uploadResult = await driver.upload(file);
+
+      const metadata = await driver.getMetadata(uploadResult.reference!);
+
+      expect(metadata).not.toBeNull();
+      expect(metadata!.contentType).toBe('application/pdf');
+    });
+
+    it('should return null for path traversal attempts', async () => {
+      const driver = createDriver();
+      for (const maliciousPath of PATH_TRAVERSAL_CASES) {
+        const metadata = await driver.getMetadata(maliciousPath);
+        expect(metadata).toBeNull();
+      }
     });
   });
 
