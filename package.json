@@ -1,7 +1,7 @@
 {
   "name": "express-storage",
-  "version": "2.0.3",
-  "description": "One API for all cloud storage: AWS S3, Google Cloud, Azure & local disk. Secure Express.js file uploads with presigned URLs, validation, and zero-config provider switching. Built-in path traversal prevention, file validation, and automatic filename sanitization.",
+  "version": "3.0.0",
+  "description": "Express.js file upload middleware for AWS S3, Google Cloud Storage, Azure Blob & local disk. Unified API with presigned URLs, file validation, streaming uploads, TypeScript support, and zero-config provider switching.",
   "homepage": "https://github.com/th3hero/express-storage#readme",
   "bugs": {
     "url": "https://github.com/th3hero/express-storage/issues"
@@ -14,69 +14,82 @@
   "author": "Alok Kumar (th3hero)",
   "main": "./dist/cjs/index.js",
   "module": "./dist/esm/index.js",
-  "types": "./dist/esm/index.d.ts",
+  "types": "./dist/cjs/index.d.ts",
   "exports": {
     ".": {
-      "types": "./dist/esm/index.d.ts",
-      "import": "./dist/esm/index.js",
-      "require": "./dist/cjs/index.js",
-      "default": "./dist/esm/index.js"
+      "import": {
+        "types": "./dist/esm/index.d.ts",
+        "default": "./dist/esm/index.js"
+      },
+      "require": {
+        "types": "./dist/cjs/index.d.ts",
+        "default": "./dist/cjs/index.js"
+      }
+    },
+    "./drivers": {
+      "import": {
+        "types": "./dist/esm/drivers/index.d.ts",
+        "default": "./dist/esm/drivers/index.js"
+      },
+      "require": {
+        "types": "./dist/cjs/drivers/index.d.ts",
+        "default": "./dist/cjs/drivers/index.js"
+      }
+    },
+    "./utils": {
+      "import": {
+        "types": "./dist/esm/utils/index.d.ts",
+        "default": "./dist/esm/utils/index.js"
+      },
+      "require": {
+        "types": "./dist/cjs/utils/index.d.ts",
+        "default": "./dist/cjs/utils/index.js"
+      }
+    },
+    "./config": {
+      "import": {
+        "types": "./dist/esm/config/index.d.ts",
+        "default": "./dist/esm/config/index.js"
+      },
+      "require": {
+        "types": "./dist/cjs/config/index.d.ts",
+        "default": "./dist/cjs/config/index.js"
+      }
     }
   },
+  "sideEffects": false,
   "files": [
     "dist",
+    "src",
     "README.md",
     "LICENSE"
   ],
   "keywords": [
     "express",
     "file-upload",
-    "storage",
     "upload",
-    "file-storage",
+    "storage",
     "cloud-storage",
     "s3",
     "aws-s3",
-    "amazon-s3",
     "gcs",
     "google-cloud-storage",
     "azure",
-    "azure-blob",
     "azure-blob-storage",
-    "blob-storage",
-    "presigned-url",
-    "presigned-upload",
-    "direct-upload",
-    "secure-upload",
-    "file-validation",
     "multer",
-    "multer-storage",
+    "multer-alternative",
+    "presigned-url",
+    "file-validation",
     "typescript",
     "nodejs",
-    "expressjs",
-    "file-manager",
-    "upload-manager",
-    "storage-driver",
-    "multi-cloud",
-    "hybrid-cloud",
-    "file-security",
-    "upload-security",
     "multipart-upload",
+    "streaming-upload",
     "file-upload-middleware",
     "express-middleware",
-    "multer-alternative",
-    "unified-storage",
-    "storage-abstraction",
-    "file-streaming",
-    "resumable-upload",
-    "cloud-agnostic",
-    "provider-agnostic",
-    "s3-upload",
-    "gcs-upload",
-    "azure-upload",
-    "bucket-storage",
-    "multer-s3-alternative",
-    "cloud-file-storage"
+    "object-storage",
+    "multi-cloud",
+    "secure-upload",
+    "s3-upload"
   ],
   "scripts": {
     "build": "npm run build:esm && npm run build:cjs && npm run build:fixup",
@@ -86,8 +99,8 @@
     "dev": "tsc -p tsconfig.esm.json --watch",
     "clean": "rm -rf dist",
     "prepublishOnly": "npm run clean && npm run build",
-    "lint": "eslint src --ext .ts",
-    "lint:fix": "eslint src --ext .ts --fix",
+    "lint": "eslint src",
+    "lint:fix": "eslint src --fix",
     "format": "prettier --write src/**/*.ts",
     "type-check": "tsc --noEmit",
     "test": "vitest run",
@@ -95,34 +108,57 @@
     "test:coverage": "vitest run --coverage"
   },
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=20.0.0"
   },
   "dependencies": {
+    "dotenv": "^16.3.0"
+  },
+  "peerDependencies": {
     "@aws-sdk/client-s3": "^3.600.0",
     "@aws-sdk/lib-storage": "^3.600.0",
     "@aws-sdk/s3-request-presigner": "^3.600.0",
     "@azure/identity": "^4.0.0",
     "@azure/storage-blob": "^12.17.0",
     "@google-cloud/storage": "^7.7.0",
-    "dotenv": "^16.3.0",
-    "tslib": "^2.6.0"
-  },
-  "peerDependencies": {
     "express": "^4.18.0 || ^5.0.0",
     "multer": "^1.4.5-lts.1 || ^2.0.0"
   },
   "peerDependenciesMeta": {
     "express": {
-      "optional": false
+      "optional": true
     },
     "multer": {
+      "optional": true
+    },
+    "@aws-sdk/client-s3": {
+      "optional": true
+    },
+    "@aws-sdk/lib-storage": {
+      "optional": true
+    },
+    "@aws-sdk/s3-request-presigner": {
+      "optional": true
+    },
+    "@azure/identity": {
+      "optional": true
+    },
+    "@azure/storage-blob": {
+      "optional": true
+    },
+    "@google-cloud/storage": {
       "optional": true
     }
   },
   "overrides": {
-    "fast-xml-parser": "^5.3.4"
+    "minimatch": ">=10.2.1"
   },
   "devDependencies": {
+    "@aws-sdk/client-s3": "^3.600.0",
+    "@aws-sdk/lib-storage": "^3.600.0",
+    "@aws-sdk/s3-request-presigner": "^3.600.0",
+    "@azure/identity": "^4.0.0",
+    "@azure/storage-blob": "^12.17.0",
+    "@google-cloud/storage": "^7.7.0",
     "@types/express": "^5.0.6",
     "@types/multer": "^2.0.0",
     "@types/node": "^25.2.0",
@@ -130,7 +166,6 @@
     "@typescript-eslint/parser": "^8.54.0",
     "@vitest/coverage-v8": "^4.0.18",
     "eslint": "^9.39.2",
-    "memfs": "^4.56.10",
     "prettier": "^3.8.1",
     "typescript": "^5.9.3",
     "vitest": "^4.0.18"

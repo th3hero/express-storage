@@ -118,22 +118,6 @@ export function createMockExeFile(options: {
 }
 
 /**
- * Creates a large mock file for streaming tests
- */
-export function createLargeMockFile(sizeInMB: number = 150): Express.Multer.File {
-  const size = sizeInMB * 1024 * 1024;
-  // Don't actually allocate the full buffer, just set the size
-  const buffer = Buffer.alloc(1024); // Small buffer
-  
-  return createMockFile({
-    originalname: 'large-file.bin',
-    mimetype: 'application/octet-stream',
-    buffer,
-    size, // Report larger size
-  });
-}
-
-/**
  * Creates a mock file with empty buffer
  */
 export function createEmptyMockFile(originalname: string = 'empty.txt'): Express.Multer.File {
@@ -169,60 +153,6 @@ export function createDiskStorageMockFile(options: {
 }
 
 /**
- * Generates random string of specified length
- */
-export function randomString(length: number): string {
-  const chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-  let result = '';
-  for (let i = 0; i < length; i++) {
-    result += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-  return result;
-}
-
-/**
- * Wait for a specified number of milliseconds
- */
-export function wait(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}
-
-/**
- * Creates test environment variables
- */
-export function createTestEnv(overrides: Record<string, string> = {}): Record<string, string> {
-  return {
-    FILE_DRIVER: 'local',
-    LOCAL_PATH: 'test-uploads',
-    ...overrides,
-  };
-}
-
-/**
- * Sets up environment variables for testing and returns cleanup function
- */
-export function setupTestEnv(env: Record<string, string>): () => void {
-  const originalEnv: Record<string, string | undefined> = {};
-  
-  // Save original values and set new ones
-  for (const [key, value] of Object.entries(env)) {
-    originalEnv[key] = process.env[key];
-    process.env[key] = value;
-  }
-  
-  // Return cleanup function
-  return () => {
-    for (const [key, value] of Object.entries(originalEnv)) {
-      if (value === undefined) {
-        delete process.env[key];
-      } else {
-        process.env[key] = value;
-      }
-    }
-  };
-}
-
-/**
  * Path traversal test cases
  */
 export const PATH_TRAVERSAL_CASES = [
@@ -239,57 +169,3 @@ export const PATH_TRAVERSAL_CASES = [
   '..%252f..%252f..%252fetc/passwd',
 ];
 
-/**
- * Invalid filename test cases
- */
-export const INVALID_FILENAME_CASES = [
-  '',
-  '   ',
-  '\t\n',
-  '../file.txt',
-  'a'.repeat(256), // Too long
-  'file\0name.txt', // Null byte
-  '/absolute/path.txt',
-  '\\windows\\path.txt',
-];
-
-/**
- * Valid filename test cases
- */
-export const VALID_FILENAME_CASES = [
-  'file.txt',
-  'my-file.jpg',
-  'document_v2.pdf',
-  'image.PNG',
-  '.gitignore',
-  '.env',
-  'file-with-many-dots.test.spec.ts',
-  '日本語ファイル.txt', // Unicode (will be sanitized)
-  'file (1).txt',
-  'a'.repeat(255), // Max length
-];
-
-/**
- * MIME type test cases
- */
-export const MIME_TYPE_CASES = {
-  valid: [
-    'text/plain',
-    'image/jpeg',
-    'image/png',
-    'application/json',
-    'application/octet-stream',
-    'video/mp4',
-    'audio/mpeg',
-    'application/vnd.ms-excel',
-  ],
-  invalid: [
-    '',
-    'invalid',
-    'text',
-    '/plain',
-    'text/',
-    'text/plain/extra',
-    'text plain',
-  ],
-};

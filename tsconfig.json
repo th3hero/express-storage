@@ -1,9 +1,11 @@
 {
   "compilerOptions": {
-    "target": "ES2020",
+    "target": "ES2022",
     "module": "ESNext",
-    "moduleResolution": "node",
-    "lib": ["ES2020"],
+    "moduleResolution": "bundler",
+    "lib": [
+      "ES2022"
+    ],
     "outDir": "./dist",
     "rootDir": "./src",
     "strict": true,
@@ -14,6 +16,7 @@
     "declarationMap": true,
     "sourceMap": true,
     "removeComments": false,
+    "isolatedModules": true,
     "noImplicitAny": true,
     "noImplicitReturns": true,
     "noImplicitThis": true,
@@ -23,10 +26,7 @@
     "noImplicitOverride": true,
     "noPropertyAccessFromIndexSignature": true,
     "noUncheckedIndexedAccess": true,
-    "resolveJsonModule": true,
-    "allowSyntheticDefaultImports": true,
-    "experimentalDecorators": true,
-    "emitDecoratorMetadata": true
+    "resolveJsonModule": true
   },
   "include": [
     "src/**/*"
@@ -36,8 +36,5 @@
     "dist",
     "**/*.test.ts",
     "**/*.spec.ts"
-  ],
-  "ts-node": {
-    "esm": true
-  }
-} 
+  ]
+}
