@@ -1,8 +1,8 @@
 # Express Storage
 
-**Secure, unified file uploads for Express.js — one API for all cloud providers.**
+**Express.js file upload middleware for AWS S3, Google Cloud Storage, Azure Blob Storage, and local disk — one unified API, zero vendor lock-in.**
 
-Stop writing separate upload code for every storage provider. Express Storage gives you a single, secure interface that works with AWS S3, Google Cloud Storage, Azure Blob Storage, and local disk. Switch providers by changing one environment variable. No code changes required.
+Express Storage is a TypeScript-first file upload library for Node.js and Express. Upload files to AWS S3, Google Cloud Storage (GCS), Azure Blob Storage, or local disk using a single API. Switch cloud providers by changing one environment variable — no code changes needed. Built-in presigned URL support, file validation, streaming uploads, and security protection make it a production-ready alternative to multer-s3 that works with every major cloud provider.
 
 [![npm version](https://img.shields.io/npm/v/express-storage.svg)](https://www.npmjs.com/package/express-storage)
 [![npm downloads](https://img.shields.io/npm/dm/express-storage.svg)](https://www.npmjs.com/package/express-storage)
@@ -14,21 +14,45 @@ Stop writing separate upload code for every storage provider. Express Storage gi
 
 ---
 
-## Why Express Storage?
+## Table of Contents
 
-Every application needs file uploads. And every application gets it wrong at first.
+- [Features](#features)
+- [Quick Start](#quick-start)
+- [Supported Storage Providers](#supported-storage-providers)
+- [Error Codes](#error-codes)
+- [Security Features](#security-features)
+- [Presigned URLs: Client-Side Uploads](#presigned-urls-client-side-uploads)
+- [Large File Uploads](#large-file-uploads)
+- [API Reference](#api-reference)
+- [Environment Variables](#environment-variables)
+- [Lifecycle Hooks](#lifecycle-hooks)
+- [Type-Safe Results](#type-safe-results)
+- [Configurable Concurrency](#configurable-concurrency)
+- [Lifecycle Management](#lifecycle-management)
+- [Custom Rate Limiting](#custom-rate-limiting)
+- [Utilities](#utilities)
+- [Real-World Examples](#real-world-examples)
+- [Migrating Between Providers](#migrating-between-providers)
+- [Migrating from v2 to v3](#migrating-from-v2-to-v3)
+- [Why Express Storage over Alternatives?](#why-express-storage-over-alternatives)
+- [TypeScript Support](#typescript-support)
+- [Contributing](#contributing)
 
-You start with local storage, then realize you need S3 for production. You copy-paste upload code from Stack Overflow, then discover it's vulnerable to path traversal attacks. You build presigned URL support, then learn Azure handles it completely differently than AWS.
+---
 
-**Express Storage solves these problems once, so you don't have to.**
+## Features
 
-### What Makes It Different
-
-- **One API, Four Providers** — Write upload code once. Deploy to any cloud.
-- **Security Built In** — Path traversal prevention, filename sanitization, file validation, and null byte protection come standard.
-- **Presigned URLs Done Right** — Client-side uploads that bypass your server, with proper validation for each provider's quirks.
-- **TypeScript Native** — Full type safety with intelligent autocomplete. No `any` types hiding bugs.
+- **One API, Four Providers** — Write upload code once. Deploy to AWS S3, GCS, Azure, or local disk.
+- **Presigned URLs** — Client-side uploads that bypass your server, with per-provider constraint enforcement.
+- **File Validation** — Size limits, MIME type checks, and extension filtering before storage.
+- **Security Built In** — Path traversal prevention, filename sanitization, null byte protection.
+- **TypeScript Native** — Full type safety with discriminated unions. No `any` types.
+- **Streaming Uploads** — Automatic multipart/streaming for files over 100MB.
 - **Zero Config Switching** — Change `FILE_DRIVER=local` to `FILE_DRIVER=s3` and you're done.
+- **Lifecycle Hooks** — Tap into upload/delete events for logging, virus scanning, or audit trails.
+- **Batch Operations** — Upload or delete multiple files in parallel with concurrency control and `AbortSignal` support.
+- **Custom Rate Limiting** — Built-in in-memory limiter or plug in your own (Redis, Memcached, etc.).
+- **Lightweight** — Install only the cloud SDK you need. No dependency bloat.
 
 ---
 
@@ -39,6 +63,21 @@ You start with local storage, then realize you need S3 for production. You copy-
 ```bash
 npm install express-storage
 ```
+
+Then install only the cloud SDK you need:
+
+```bash
+# For AWS S3
+npm install @aws-sdk/client-s3 @aws-sdk/lib-storage @aws-sdk/s3-request-presigner
+
+# For Google Cloud Storage
+npm install @google-cloud/storage
+
+# For Azure Blob Storage
+npm install @azure/storage-blob @azure/identity
+```
+
+Local storage works out of the box with no additional dependencies.
 
 ### Basic Setup
 
@@ -58,7 +97,7 @@ app.post("/upload", upload.single("file"), async (req, res) => {
     });
 
     if (result.success) {
-        res.json({ url: result.fileUrl });
+        res.json({ reference: result.reference, url: result.fileUrl });
     } else {
         res.status(400).json({ error: result.error });
     }
@@ -106,6 +145,52 @@ That's it. Your upload code stays the same regardless of which provider you choo
 | **AWS S3**       | `s3`          | `s3-presigned`    | Most production apps      |
 | **Google Cloud** | `gcs`         | `gcs-presigned`   | GCP-hosted applications   |
 | **Azure Blob**   | `azure`       | `azure-presigned` | Azure-hosted applications |
+
+---
+
+## Error Codes
+
+Every error result includes a `code` field for programmatic error handling — no more parsing error strings:
+
+```typescript
+const result = await storage.uploadFile(file, {
+    maxSize: 5 * 1024 * 1024,
+    allowedMimeTypes: ["image/jpeg", "image/png"],
+});
+
+if (!result.success) {
+    switch (result.code) {
+        case "FILE_TOO_LARGE":
+            res.status(413).json({ error: "File is too large" });
+            break;
+        case "INVALID_MIME_TYPE":
+            res.status(415).json({ error: "Unsupported file type" });
+            break;
+        case "RATE_LIMITED":
+            res.status(429).json({ error: "Too many requests" });
+            break;
+        default:
+            res.status(400).json({ error: result.error });
+    }
+}
+```
+
+| Code                       | When                                                           |
+| -------------------------- | -------------------------------------------------------------- |
+| `NO_FILE`                  | No file provided to upload                                     |
+| `FILE_EMPTY`               | File has zero bytes                                            |
+| `FILE_TOO_LARGE`           | File exceeds `maxSize` or `maxFileSize`                        |
+| `INVALID_MIME_TYPE`        | MIME type not in `allowedMimeTypes`                            |
+| `INVALID_EXTENSION`        | Extension not in `allowedExtensions`                           |
+| `INVALID_FILENAME`         | Filename is empty, too long, or contains illegal characters    |
+| `INVALID_INPUT`            | Bad argument (e.g., non-numeric fileSize, missing fileName)    |
+| `PATH_TRAVERSAL`           | Path contains `..`, `\0`, or other traversal sequences         |
+| `FILE_NOT_FOUND`           | File doesn't exist (delete, validate, view)                    |
+| `VALIDATION_FAILED`        | Post-upload validation failed (content type or size mismatch)  |
+| `RATE_LIMITED`              | Presigned URL rate limit exceeded                              |
+| `HOOK_ABORTED`             | A `beforeUpload` or `beforeDelete` hook threw                  |
+| `PRESIGNED_NOT_SUPPORTED`  | Local driver doesn't support presigned URLs                    |
+| `PROVIDER_ERROR`           | Cloud provider SDK error (network, auth, permissions)          |
 
 ---
 
@@ -303,9 +388,6 @@ const result = await storage.uploadFile(file, validation?, options?);
 
 // Multiple files (processed in parallel with concurrency limits)
 const results = await storage.uploadFiles(files, validation?, options?);
-
-// Generic upload (auto-detects single vs multiple)
-const result = await storage.upload(input, validation?, options?);
 ```
 
 ### Presigned URL Methods
@@ -328,11 +410,16 @@ const results = await storage.generateViewUrls(references);
 ### File Management
 
 ```typescript
-// Delete single file
-const success = await storage.deleteFile(reference);
+// Delete single file (returns DeleteResult with error details on failure)
+const result = await storage.deleteFile(reference);
+if (!result.success) console.log(result.error, result.code);
 
 // Delete multiple files
 const results = await storage.deleteFiles(references);
+
+// Get file metadata without downloading
+const info = await storage.getMetadata(reference);
+if (info) console.log(info.name, info.size, info.contentType, info.lastModified);
 
 // List files with pagination
 const result = await storage.listFiles(prefix?, maxResults?, continuationToken?);
@@ -407,6 +494,145 @@ interface FileValidationOptions {
 
 ---
 
+## Lifecycle Hooks
+
+Hooks let you tap into the upload/delete lifecycle without modifying drivers. Perfect for logging, virus scanning, metrics, or audit trails.
+
+```typescript
+const storage = new StorageManager({
+    driver: "s3",
+    hooks: {
+        beforeUpload: async (file) => {
+            await virusScan(file.buffer); // Throw to abort upload
+        },
+        afterUpload: (result, file) => {
+            auditLog("file_uploaded", { result, originalName: file.originalname });
+        },
+        beforeDelete: async (reference) => {
+            await checkPermissions(reference);
+        },
+        afterDelete: (reference, success) => {
+            if (success) auditLog("file_deleted", { reference });
+        },
+        onError: (error, context) => {
+            metrics.increment("storage.error", { operation: context.operation });
+        },
+    },
+});
+```
+
+All hooks are optional and async-safe. `beforeUpload` and `beforeDelete` can throw to abort the operation — the error message is included in the result.
+
+---
+
+## Type-Safe Results
+
+All result types use TypeScript discriminated unions. Check `result.success` and TypeScript narrows the type automatically:
+
+```typescript
+const result = await storage.uploadFile(file);
+
+if (result.success) {
+    console.log(result.reference); // stored file path (for delete/view/getMetadata)
+    console.log(result.fileUrl);   // URL to access the file
+} else {
+    console.log(result.error); // TypeScript knows this exists
+}
+```
+
+This applies to all result types: `FileUploadResult`, `DeleteResult`, `PresignedUrlResult`, `BlobValidationResult`, and `ListFilesResult`.
+
+---
+
+## Configurable Concurrency
+
+Control how many parallel operations run in batch methods:
+
+```typescript
+const storage = new StorageManager({
+    driver: "s3",
+    concurrency: 5, // Applies to uploadFiles, deleteFiles, generateUploadUrls, etc.
+});
+```
+
+Default is 10. Lower it for rate-limited APIs or resource-constrained environments.
+
+### Cancellable Batch Operations
+
+All batch methods accept an `AbortSignal` for cancelling long-running operations mid-flight:
+
+```typescript
+const controller = new AbortController();
+
+// Cancel after 5 seconds
+setTimeout(() => controller.abort(), 5000);
+
+try {
+    const results = await storage.uploadFiles(files, validation, options, {
+        signal: controller.signal,
+    });
+} catch (error) {
+    console.log("Upload batch was cancelled");
+}
+
+// Also works with deleteFiles, generateUploadUrls, generateViewUrls
+await storage.deleteFiles(references, { signal: controller.signal });
+```
+
+---
+
+## Lifecycle Management
+
+Clean up resources when you're done with a StorageManager instance:
+
+```typescript
+const storage = new StorageManager({ driver: "s3", rateLimiter: { maxRequests: 100 } });
+
+// ... use storage ...
+
+// Release resources (clears factory cache entry and rate limiter)
+storage.destroy();
+```
+
+This is especially useful in tests, serverless functions, or any environment where StorageManager instances are created and discarded frequently.
+
+---
+
+## Custom Rate Limiting
+
+The built-in rate limiter works for single-process apps. For clustered deployments, provide your own adapter:
+
+```typescript
+import { StorageManager, RateLimiterAdapter } from "express-storage";
+// or: import { RateLimiterAdapter } from "express-storage"; // types are always at top level
+
+// Built-in in-memory limiter
+const storage = new StorageManager({
+    driver: "s3",
+    rateLimiter: { maxRequests: 100, windowMs: 60000 },
+});
+
+// Custom Redis-backed limiter
+class RedisRateLimiter implements RateLimiterAdapter {
+    async tryAcquire() {
+        /* Redis INCR + EXPIRE */
+    }
+    async getRemainingRequests() {
+        /* ... */
+    }
+    async getResetTime() {
+        /* ... */
+    }
+}
+
+const storage = new StorageManager({
+    driver: "s3",
+    rateLimiter: new RedisRateLimiter(redisClient),
+});
+```
+
+---
+
 ## Utilities
 
 Express Storage includes battle-tested utilities you can use directly.
@@ -414,7 +640,7 @@ Express Storage includes battle-tested utilities you can use directly.
 ### Retry with Exponential Backoff
 
 ```typescript
-import { withRetry } from "express-storage";
+import { withRetry } from "express-storage/utils";
 
 const result = await withRetry(() => storage.uploadFile(file), {
     maxAttempts: 3,
@@ -432,7 +658,7 @@ import {
     isDocumentFile,
     getFileExtension,
     formatFileSize,
-} from "express-storage";
+} from "express-storage/utils";
 
 isImageFile("image/jpeg"); // true
 isDocumentFile("application/pdf"); // true
@@ -443,7 +669,7 @@ formatFileSize(1048576); // '1 MB'
 ### Custom Logging
 
 ```typescript
-import { StorageManager, Logger } from "express-storage";
+import { StorageManager, type Logger } from "express-storage";
 
 const logger: Logger = {
     debug: (msg, ...args) => console.debug(`[Storage] ${msg}`, ...args),
@@ -476,7 +702,7 @@ app.post("/users/:id/avatar", upload.single("avatar"), async (req, res) => {
     );
 
     if (result.success) {
-        await db.users.update(req.params.id, { avatarUrl: result.fileUrl });
+        await db.users.update(req.params.id, { reference: result.reference, avatarUrl: result.fileUrl });
         res.json({ avatarUrl: result.fileUrl });
     } else {
         res.status(400).json({ error: result.error });
@@ -553,7 +779,7 @@ app.post("/gallery/upload", upload.array("photos", 20), async (req, res) => {
         uploaded: successful.length,
         failed: failed.length,
         files: successful.map((r) => ({
-            fileName: r.fileName,
+            reference: r.reference,
             url: r.fileUrl,
         })),
         errors: failed.map((r) => r.error),
@@ -600,27 +826,130 @@ AZURE_CONNECTION_STRING=DefaultEndpointsProtocol=https;AccountName=...
 
 ---
 
+## Migrating from v2 to v3
+
+v3 has breaking changes in dependencies, types, and configuration. Most apps require minimal code changes.
+
+### What Changed
+
+1. **Cloud SDKs are optional peer dependencies.** Install only what you need — no more downloading all SDKs.
+2. **Result types are discriminated unions.** `result.fileName` is guaranteed when `result.success === true`. Code that accessed properties without checking `success` may need updates.
+3. **Presigned driver subclasses removed.** `S3PresignedStorageDriver`, `GCSPresignedStorageDriver`, and `AzurePresignedStorageDriver` are no longer exported. Use the base driver classes or `StorageManager` (the `'s3-presigned'` driver string still works).
+4. **`rateLimit` option renamed to `rateLimiter`.** Now accepts either options or a custom adapter.
+5. **`getRateLimitStatus()` is async.** Returns a Promise.
+6. **`deleteFile()` returns `DeleteResult`** instead of `boolean`. Check `result.success` instead of the boolean value.
+7. **`IStorageDriver.delete()` returns `DeleteResult`** instead of `boolean`. Custom drivers must be updated.
+8. **`ensureDirectoryExists()` is async.** Returns a `Promise<void>` — add `await` to existing calls.
+9. **Presigned URL methods return stricter types.** `generateUploadUrl()` returns `PresignedUploadUrlResult` (guarantees `uploadUrl`, `fileName`, `reference`, `expiresIn` on success). `generateViewUrl()` returns `PresignedViewUrlResult` (guarantees `viewUrl`, `reference`, `expiresIn` on success).
+
+### Migration Steps
+
+1. Update the package:
+
+```bash
+npm install express-storage@3
+```
+
+2. Install the SDK for your provider:
+
+```bash
+# If you use S3
+npm install @aws-sdk/client-s3 @aws-sdk/lib-storage @aws-sdk/s3-request-presigner
+
+# If you use GCS
+npm install @google-cloud/storage
+
+# If you use Azure
+npm install @azure/storage-blob @azure/identity
+```
+
+3. Update result type access — `fileName` is now `reference`:
+
+```typescript
+// Before (v2)
+const name = result.fileName!;
+
+// After (v3) — "reference" is the stored file path used for all subsequent operations
+if (result.success) {
+    const ref = result.reference;  // pass to deleteFile(), getMetadata(), generateViewUrl()
+    const url = result.fileUrl;    // URL to access the file
+}
+```
+
+4. Update rate limiting config (if used):
+
+```typescript
+// Before (v2)
+new StorageManager({ driver: "s3", rateLimit: { maxRequests: 100 } });
+
+// After (v3)
+new StorageManager({ driver: "s3", rateLimiter: { maxRequests: 100 } });
+```
+
+If you forget to install a required SDK, you'll get a clear error message telling you exactly what to install.
+
+---
+
+## Why Express Storage over Alternatives?
+
+If you're evaluating file upload libraries for Express.js, here's how Express Storage compares:
+
+| Feature                     | **Express Storage** | **multer-s3** | **express-fileupload** | **uploadfs** |
+| --------------------------- | ------------------- | ------------- | ---------------------- | ------------ |
+| AWS S3                      | Yes                 | Yes           | Manual                 | Yes          |
+| Google Cloud Storage        | Yes                 | No            | No                     | Yes          |
+| Azure Blob Storage          | Yes                 | No            | No                     | Yes          |
+| Local disk                  | Yes                 | No            | Yes                    | Yes          |
+| Presigned URLs              | Yes                 | No            | No                     | No           |
+| File validation             | Yes                 | No            | Partial                | No           |
+| TypeScript (native)         | Yes                 | No            | @types                 | No           |
+| Streaming uploads           | Yes                 | Yes           | No                     | No           |
+| Switch providers at runtime | Yes (env var)       | No            | No                     | No           |
+| Path traversal protection   | Yes                 | No            | No                     | No           |
+| Lifecycle hooks             | Yes                 | No            | No                     | No           |
+| Batch operations            | Yes                 | No            | No                     | No           |
+| Rate limiting               | Yes                 | No            | No                     | No           |
+
+**multer-s3** is great if you only need S3. Express Storage covers S3 *plus* GCS, Azure, and local disk with the same code — and adds presigned URLs, validation, and security that multer-s3 doesn't provide.
+
+---
+
 ## TypeScript Support
 
 Express Storage is written in TypeScript and exports all types:
 
 ```typescript
+// Core — what most users need
 import {
     StorageManager,
-    StorageDriver,
+    InMemoryRateLimiter,
     FileUploadResult,
-    PresignedUrlResult,
+    DeleteResult,
+    PresignedUploadUrlResult,
+    StorageOptions,
     FileValidationOptions,
     UploadOptions,
-    Logger,
 } from "express-storage";
 
-// Full autocomplete and type checking
+// Utilities — standalone helpers (import separately to keep your bundle small)
+import { withRetry, formatFileSize, withConcurrencyLimit } from "express-storage/utils";
+
+// Drivers — for custom driver implementations or direct driver use
+import { BaseStorageDriver, createDriver } from "express-storage/drivers";
+
+// Config — environment variable loading and validation
+import { validateStorageConfig, loadAndValidateConfig } from "express-storage/config";
+
+// Discriminated unions — TypeScript narrows automatically
 const result: FileUploadResult = await storage.uploadFile(file);
 
 if (result.success) {
-    console.log(result.fileName); // TypeScript knows this exists
-    console.log(result.fileUrl); // TypeScript knows this exists
+    // TypeScript knows: result is FileUploadSuccess
+    console.log(result.reference); // string — stored file path
+    console.log(result.fileUrl);   // string — URL to access
+} else {
+    // TypeScript knows: result is FileUploadError
+    console.log(result.error); // string (guaranteed)
 }
 ```
 
@@ -628,17 +957,20 @@ if (result.success) {
 
 ## Contributing
 
-Contributions are welcome! Please read our contributing guidelines before submitting a pull request.
+Contributions are welcome!
 
 ```bash
 # Clone the repository
 git clone https://github.com/th3hero/express-storage.git
 
-# Install dependencies
+# Install dependencies (includes all cloud SDKs for development)
 npm install
 
-# Run in development mode
-npm run dev
+# Run tests
+npm test
+
+# Run tests in watch mode
+npm run test:watch
 
 # Build for production
 npm run build
