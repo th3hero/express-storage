@@ -11,6 +11,7 @@ import path from 'path';
 import { StorageManager } from '../src/storage-manager.js';
 import { StorageDriverFactory } from '../src/factory/driver.factory.js';
 import { LocalStorageDriver } from '../src/drivers/local.driver.js';
+import type { StorageConfig } from '../src/types/storage.types.js';
 import { resetDotenvInitialization } from '../src/utils/config.utils.js';
 import {
   generateUniqueFileName,
@@ -18,6 +19,7 @@ import {
   formatFileSize,
   withRetry,
   withConcurrencyLimit,
+  detectMimeType,
   sleep,
 } from '../src/utils/file.utils.js';
 import {
@@ -34,7 +36,6 @@ const TEST_DIR = path.join(process.cwd(), 'test-regression');
 describe('Regression Tests', () => {
   beforeEach(() => {
     resetDotenvInitialization();
-    StorageDriverFactory.clearCache();
     
     if (fs.existsSync(TEST_DIR)) {
       fs.rmSync(TEST_DIR, { recursive: true, force: true });
@@ -42,8 +43,6 @@ describe('Regression Tests', () => {
   });
 
   afterEach(() => {
-    StorageDriverFactory.clearCache();
-    
     if (fs.existsSync(TEST_DIR)) {
       fs.rmSync(TEST_DIR, { recursive: true, force: true });
     }
@@ -366,7 +365,7 @@ describe('Regression Tests', () => {
         const result = await storage.uploadFile(file);
 
         expect(result.success).toBe(true);
-        expect(result.fileName).toContain('.json');
+        expect(result.reference).toContain('.json');
       });
     });
 
@@ -387,7 +386,7 @@ describe('Regression Tests', () => {
         expect(results.every(r => r.success)).toBe(true);
 
         // All filenames should be unique
-        const names = new Set(results.map(r => r.fileName));
+        const names = new Set(results.map(r => r.reference));
         expect(names.size).toBe(20);
       });
 
@@ -406,7 +405,7 @@ describe('Regression Tests', () => {
 
         const references = uploadResults
           .filter(r => r.success)
-          .map(r => r.fileName!);
+          .map(r => r.reference!);
 
         // Delete all concurrently
         const deleteResults = await storage.deleteFiles(references);
@@ -596,36 +595,35 @@ describe('Regression Tests', () => {
 
   describe('Driver Factory Regression Tests', () => {
     it('should handle rapid cache operations', () => {
-      // Rapidly create and clear cache
+      const factory = new StorageDriverFactory();
+
       for (let i = 0; i < 100; i++) {
-        StorageDriverFactory.createDriver({
+        factory.getOrCreate({
           driver: 'local',
           localPath: `path-${i}`,
         });
 
         if (i % 10 === 0) {
-          StorageDriverFactory.clearCache();
+          factory.clearCache();
         }
       }
 
-      // Should not crash
-      expect(StorageDriverFactory.getCacheSize()).toBeGreaterThanOrEqual(0);
+      expect(factory.getCacheSize()).toBeGreaterThanOrEqual(0);
     });
 
     it('should handle identical configs created simultaneously', async () => {
-      const config = {
-        driver: 'local' as const,
+      const factory = new StorageDriverFactory();
+      const config: StorageConfig = {
+        driver: 'local',
         localPath: 'identical-path',
       };
 
-      // Create drivers concurrently
       const promises = Array(10).fill(null).map(() =>
-        Promise.resolve(StorageDriverFactory.createDriver(config))
+        Promise.resolve(factory.getOrCreate(config))
       );
 
       const drivers = await Promise.all(promises);
 
-      // All should be the same cached instance
       const first = drivers[0];
       expect(drivers.every(d => d === first)).toBe(true);
     });
@@ -662,23 +660,22 @@ describe('Regression Tests', () => {
       }).toThrow();
     });
 
-    it('should mask all sensitive fields in getSafeConfig', () => {
+    it('should not expose credentials in getConfig', () => {
       const storage = new StorageManager({
         driver: 'local',
         credentials: { localPath: TEST_DIR },
       });
 
-      const safeConfig = storage.getSafeConfig();
+      const config = storage.getConfig();
 
-      // These should be undefined or masked
-      expect(safeConfig.awsAccessKey).toBeUndefined();
-      expect(safeConfig.awsSecretKey).toBeUndefined();
-      expect(safeConfig.azureConnectionString).toBeUndefined();
-      expect(safeConfig.azureAccountKey).toBeUndefined();
-      expect(safeConfig.gcsCredentials).toBeUndefined();
+      expect('awsAccessKey' in config).toBe(false);
+      expect('awsSecretKey' in config).toBe(false);
+      expect('azureConnectionString' in config).toBe(false);
+      expect('azureAccountKey' in config).toBe(false);
+      expect('gcsCredentials' in config).toBe(false);
     });
 
-    it('should preserve non-sensitive fields in getSafeConfig', () => {
+    it('should preserve non-sensitive fields in getConfig', () => {
       const storage = new StorageManager({
         driver: 'local',
         credentials: {
@@ -688,11 +685,11 @@ describe('Regression Tests', () => {
         },
       });
 
-      const safeConfig = storage.getSafeConfig();
+      const config = storage.getConfig();
 
-      expect(safeConfig.localPath).toBe(TEST_DIR);
-      expect(safeConfig.bucketPath).toBe('my-path');
-      expect(safeConfig.presignedUrlExpiry).toBe(1800);
+      expect(config.localPath).toContain('test-regression');
+      expect(config.bucketPath).toBe('my-path');
+      expect(config.presignedUrlExpiry).toBe(1800);
     });
   });
 
@@ -753,6 +750,160 @@ describe('Regression Tests', () => {
       });
 
       expect(result.success).toBe(true);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Magic byte detection fixes
+  // -------------------------------------------------------------------------
+
+  describe('RIFF container sub-format detection', () => {
+    it('should detect WebP from RIFF container (not false-positive WAV)', () => {
+      // RIFF + size + WEBP
+      const webp = Buffer.from([
+        0x52, 0x49, 0x46, 0x46, // RIFF
+        0x00, 0x00, 0x00, 0x00, // file size (placeholder)
+        0x57, 0x45, 0x42, 0x50, // WEBP
+      ]);
+      expect(detectMimeType(webp)).toBe('image/webp');
+    });
+
+    it('should detect WAV from RIFF container', () => {
+      const wav = Buffer.from([
+        0x52, 0x49, 0x46, 0x46,
+        0x00, 0x00, 0x00, 0x00,
+        0x57, 0x41, 0x56, 0x45, // WAVE
+      ]);
+      expect(detectMimeType(wav)).toBe('audio/wav');
+    });
+
+    it('should detect AVI from RIFF container', () => {
+      const avi = Buffer.from([
+        0x52, 0x49, 0x46, 0x46,
+        0x00, 0x00, 0x00, 0x00,
+        0x41, 0x56, 0x49, 0x20, // AVI\x20
+      ]);
+      expect(detectMimeType(avi)).toBe('video/x-msvideo');
+    });
+
+    it('should return undefined for unknown RIFF sub-format', () => {
+      const unknown = Buffer.from([
+        0x52, 0x49, 0x46, 0x46,
+        0x00, 0x00, 0x00, 0x00,
+        0x58, 0x58, 0x58, 0x58, // XXXX
+      ]);
+      expect(detectMimeType(unknown)).toBeUndefined();
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Input mutation fix
+  // -------------------------------------------------------------------------
+
+  describe('upload must not mutate the input file object', () => {
+    it('should not modify file.size during upload', async () => {
+      const sm = new StorageManager({
+        driver: 'local',
+        credentials: { localPath: TEST_DIR },
+      });
+      const file = createMockFile({ originalname: 'test.txt', size: 42 });
+      const originalSize = file.size;
+
+      await sm.uploadFile(file);
+
+      expect(file.size).toBe(originalSize);
+      sm.destroy();
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Factory clearCache destroys drivers
+  // -------------------------------------------------------------------------
+
+  describe('StorageDriverFactory resource cleanup', () => {
+    it('clearCache should call destroy on all cached drivers', () => {
+      const factory = new StorageDriverFactory();
+      const config: StorageConfig = { driver: 'local', localPath: TEST_DIR };
+      const driver = factory.getOrCreate(config);
+
+      let destroyed = false;
+      driver.destroy = () => { destroyed = true; };
+
+      factory.clearCache();
+
+      expect(destroyed).toBe(true);
+      expect(factory.getCacheSize()).toBe(0);
+    });
+
+    it('should use hashed cache key (same config returns same driver)', () => {
+      const factory = new StorageDriverFactory();
+      const config: StorageConfig = { driver: 'local', localPath: TEST_DIR };
+
+      const driver1 = factory.getOrCreate(config);
+      const driver2 = factory.getOrCreate({ ...config });
+
+      expect(driver1).toBe(driver2);
+      factory.clearCache();
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // withConcurrencyLimit work-stealing
+  // -------------------------------------------------------------------------
+
+  describe('withConcurrencyLimit load balancing', () => {
+    it('should distribute slow items across workers evenly', async () => {
+      const workerLog: number[] = [];
+      const items = [100, 1, 1, 1, 100, 1, 1, 1]; // ms delay per item
+
+      await withConcurrencyLimit(
+        items,
+        async (delayMs, index) => {
+          await sleep(delayMs);
+          workerLog.push(index);
+        },
+        { maxConcurrent: 2 }
+      );
+
+      // With work-stealing, worker that finishes fast items should pick up
+      // more work. All 8 items should complete.
+      expect(workerLog).toHaveLength(8);
+      expect(workerLog.sort()).toEqual([0, 1, 2, 3, 4, 5, 6, 7]);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // exists() convenience method
+  // -------------------------------------------------------------------------
+
+  describe('exists() method', () => {
+    let sm: StorageManager;
+
+    beforeEach(() => {
+      sm = new StorageManager({
+        driver: 'local',
+        credentials: { localPath: TEST_DIR },
+      });
+    });
+
+    afterEach(() => {
+      sm.destroy();
+    });
+
+    it('should return true for an existing file', async () => {
+      const file = createMockFile({ originalname: 'exists-test.txt' });
+      const result = await sm.uploadFile(file);
+      if (!result.success) throw new Error('Upload failed');
+
+      expect(await sm.exists(result.reference)).toBe(true);
+    });
+
+    it('should return false for a non-existent file', async () => {
+      expect(await sm.exists('nonexistent/file.txt')).toBe(false);
+    });
+
+    it('should return false for path traversal attempts', async () => {
+      expect(await sm.exists('../../../etc/passwd')).toBe(false);
     });
   });
 });
