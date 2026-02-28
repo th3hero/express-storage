@@ -14,7 +14,6 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import fs from 'fs';
 import path from 'path';
 import { StorageManager } from '../src/storage-manager.js';
-import { StorageDriverFactory } from '../src/factory/driver.factory.js';
 import { LocalStorageDriver } from '../src/drivers/local.driver.js';
 import {
   validateFileName,
@@ -36,9 +35,6 @@ const SENSITIVE_DIR = path.join(process.cwd(), 'test-sensitive');
 
 describe('Security Tests', () => {
   beforeEach(() => {
-    StorageDriverFactory.clearCache();
-    
-    // Clean up test directories
     [TEST_DIR, SENSITIVE_DIR].forEach(dir => {
       if (fs.existsSync(dir)) {
         fs.rmSync(dir, { recursive: true, force: true });
@@ -54,8 +50,6 @@ describe('Security Tests', () => {
   });
 
   afterEach(() => {
-    StorageDriverFactory.clearCache();
-    
     [TEST_DIR, SENSITIVE_DIR].forEach(dir => {
       if (fs.existsSync(dir)) {
         fs.rmSync(dir, { recursive: true, force: true });
@@ -116,7 +110,7 @@ describe('Security Tests', () => {
         // Try various path traversal attacks
         for (const payload of PATH_TRAVERSAL_CASES.slice(0, 8)) {
           const deleted = await storage.deleteFile(payload);
-          expect(deleted).toBe(false);
+          expect(deleted.success).toBe(false);
         }
 
         // Sensitive file should still exist
@@ -128,7 +122,7 @@ describe('Security Tests', () => {
 
         // URL encoded path traversal
         const deleted = await storage.deleteFile('%2e%2e%2fsecret.txt');
-        expect(deleted).toBe(false);
+        expect(deleted.success).toBe(false);
         expect(fs.existsSync(sensitiveFile)).toBe(true);
       });
     });
@@ -210,7 +204,7 @@ describe('Security Tests', () => {
 
     it('should reject null bytes in delete reference', async () => {
       const deleted = await storage.deleteFile('file\0.txt');
-      expect(deleted).toBe(false);
+      expect(deleted.success).toBe(false);
     });
 
     it('should reject null bytes in list prefix', async () => {
@@ -260,7 +254,7 @@ describe('Security Tests', () => {
       // Try to delete via symlink
       const deleted = await driver.delete('symlink.txt');
 
-      expect(deleted).toBe(false);
+      expect(deleted.success).toBe(false);
       expect(fs.existsSync(targetFile)).toBe(true);
       expect(fs.existsSync(symlinkPath)).toBe(true);
     });
@@ -328,7 +322,7 @@ describe('Security Tests', () => {
       expect(uploadResult.success).toBe(true);
 
       // Validation should detect the true file type
-      const validation = await driver.validateAndConfirmUpload(uploadResult.fileName!);
+      const validation = await driver.validateAndConfirmUpload(uploadResult.reference!);
 
       expect(validation.success).toBe(true);
       expect(validation.actualContentType).toBe('application/x-msdownload');
@@ -340,7 +334,7 @@ describe('Security Tests', () => {
       const uploadResult = await driver.upload(jpegFile);
       expect(uploadResult.success).toBe(true);
 
-      const validation = await driver.validateAndConfirmUpload(uploadResult.fileName!);
+      const validation = await driver.validateAndConfirmUpload(uploadResult.reference!);
 
       expect(validation.success).toBe(true);
       expect(validation.actualContentType).toBe('image/jpeg');
@@ -352,7 +346,7 @@ describe('Security Tests', () => {
       const uploadResult = await driver.upload(exeFile);
       expect(uploadResult.success).toBe(true);
 
-      const validation = await driver.validateAndConfirmUpload(uploadResult.fileName!, {
+      const validation = await driver.validateAndConfirmUpload(uploadResult.reference!, {
         expectedContentType: 'image/jpeg',
       });
 
@@ -504,7 +498,7 @@ describe('Security Tests', () => {
       const storage = new StorageManager({
         driver: 'local',
         credentials: { localPath: TEST_DIR },
-        rateLimit: {
+        rateLimiter: {
           maxRequests: 5,
           windowMs: 60000,
         },
@@ -527,7 +521,7 @@ describe('Security Tests', () => {
       const storage = new StorageManager({
         driver: 'local',
         credentials: { localPath: TEST_DIR },
-        rateLimit: {
+        rateLimiter: {
           maxRequests: 3,
           windowMs: 60000,
         },
@@ -548,7 +542,7 @@ describe('Security Tests', () => {
       const storage = new StorageManager({
         driver: 'local',
         credentials: { localPath: TEST_DIR },
-        rateLimit: {
+        rateLimiter: {
           maxRequests: 1,
           windowMs: 60000,
         },
@@ -556,7 +550,7 @@ describe('Security Tests', () => {
 
       await storage.generateUploadUrl('file1.txt');
 
-      const status = storage.getRateLimitStatus();
+      const status = await storage.getRateLimitStatus();
 
       expect(status).not.toBeNull();
       expect(status!.remainingRequests).toBe(0);

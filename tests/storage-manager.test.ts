@@ -9,7 +9,6 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import fs from 'fs';
 import path from 'path';
 import { StorageManager } from '../src/storage-manager.js';
-import { StorageDriverFactory } from '../src/factory/driver.factory.js';
 import { resetDotenvInitialization } from '../src/utils/config.utils.js';
 import {
   createMockFile,
@@ -29,18 +28,13 @@ const TEST_UPLOAD_DIR = path.join(process.cwd(), 'test-storage-manager-uploads')
 describe('StorageManager', () => {
   beforeEach(() => {
     resetDotenvInitialization();
-    StorageDriverFactory.clearCache();
     
-    // Clean up test directory
     if (fs.existsSync(TEST_UPLOAD_DIR)) {
       fs.rmSync(TEST_UPLOAD_DIR, { recursive: true, force: true });
     }
   });
 
   afterEach(() => {
-    StorageDriverFactory.clearCache();
-    
-    // Clean up test directory
     if (fs.existsSync(TEST_UPLOAD_DIR)) {
       fs.rmSync(TEST_UPLOAD_DIR, { recursive: true, force: true });
     }
@@ -75,15 +69,18 @@ describe('StorageManager', () => {
       expect(config.maxFileSize).toBe(10 * 1024 * 1024);
     });
 
-    it('should mask sensitive credentials in getSafeConfig', () => {
+    it('should not expose credentials in getConfig', () => {
       const storage = new StorageManager({
         driver: 'local',
         credentials: { localPath: TEST_UPLOAD_DIR },
       });
 
-      const safeConfig = storage.getSafeConfig();
-      expect(safeConfig.awsAccessKey).toBeUndefined();
-      expect(safeConfig.awsSecretKey).toBeUndefined();
+      const config = storage.getConfig();
+      expect('awsAccessKey' in config).toBe(false);
+      expect('awsSecretKey' in config).toBe(false);
+      expect('azureConnectionString' in config).toBe(false);
+      expect('azureAccountKey' in config).toBe(false);
+      expect('gcsCredentials' in config).toBe(false);
     });
 
     it('should return available drivers', () => {
@@ -146,7 +143,7 @@ describe('StorageManager', () => {
       const result = await storage.uploadFile(file);
 
       expect(result.success).toBe(true);
-      expect(result.fileName).toBeDefined();
+      expect(result.reference).toBeDefined();
       expect(result.fileUrl).toBeDefined();
     });
 
@@ -156,7 +153,7 @@ describe('StorageManager', () => {
       const result = await storage.uploadFile(file);
 
       expect(result.success).toBe(true);
-      expect(result.fileName).toContain('.jpg');
+      expect(result.reference).toContain('.jpg');
     });
 
     it('should upload a PNG file', async () => {
@@ -165,7 +162,7 @@ describe('StorageManager', () => {
       const result = await storage.uploadFile(file);
 
       expect(result.success).toBe(true);
-      expect(result.fileName).toContain('.png');
+      expect(result.reference).toContain('.png');
     });
 
     it('should upload a PDF file', async () => {
@@ -174,7 +171,7 @@ describe('StorageManager', () => {
       const result = await storage.uploadFile(file);
 
       expect(result.success).toBe(true);
-      expect(result.fileName).toContain('.pdf');
+      expect(result.reference).toContain('.pdf');
     });
 
     it('should upload multiple files', async () => {
@@ -222,24 +219,6 @@ describe('StorageManager', () => {
       });
 
       expect(result.success).toBe(true);
-    });
-
-    it('should use generic upload for single file', async () => {
-      const file = createMockFile();
-
-      const result = await storage.upload({ type: 'single', file });
-
-      expect(result).not.toBeInstanceOf(Array);
-      expect((result as any).success).toBe(true);
-    });
-
-    it('should use generic upload for multiple files', async () => {
-      const files = [createMockFile(), createMockFile()];
-
-      const results = await storage.upload({ type: 'multiple', files });
-
-      expect(results).toBeInstanceOf(Array);
-      expect((results as any[]).length).toBe(2);
     });
 
     it('should accept wildcard MIME types', async () => {
@@ -410,6 +389,28 @@ describe('StorageManager', () => {
       const result = await storage.uploadFile(file);
 
       expect(result.success).toBe(false);
+    });
+
+    it('should reject invalid contentType in upload options', async () => {
+      const file = createMockFile();
+
+      const result = await storage.uploadFile(file, undefined, {
+        contentType: 'not-a-valid-mime',
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('Invalid contentType');
+      expect(result.code).toBe('INVALID_INPUT');
+    });
+
+    it('should accept valid contentType in upload options', async () => {
+      const file = createMockFile();
+
+      const result = await storage.uploadFile(file, undefined, {
+        contentType: 'application/octet-stream',
+      });
+
+      expect(result.success).toBe(true);
     });
   });
 
@@ -645,13 +646,13 @@ describe('StorageManager', () => {
       const storage = new StorageManager({
         driver: 'local',
         credentials: { localPath: TEST_UPLOAD_DIR },
-        rateLimit: {
+        rateLimiter: {
           maxRequests: 3,
           windowMs: 60000,
         },
       });
 
-      // Make requests up to limit
+      // Make requests up to limit (each counts even though local driver returns "not supported")
       await storage.generateUploadUrl('file1.txt');
       await storage.generateUploadUrl('file2.txt');
       await storage.generateUploadUrl('file3.txt');
@@ -663,36 +664,36 @@ describe('StorageManager', () => {
       expect(result.error).toContain('Rate limit exceeded');
     });
 
-    it('should report rate limit status', () => {
+    it('should report rate limit status', async () => {
       const storage = new StorageManager({
         driver: 'local',
         credentials: { localPath: TEST_UPLOAD_DIR },
-        rateLimit: {
+        rateLimiter: {
           maxRequests: 10,
           windowMs: 60000,
         },
       });
 
-      const status = storage.getRateLimitStatus();
+      const status = await storage.getRateLimitStatus();
 
       expect(status).not.toBeNull();
       expect(status!.remainingRequests).toBe(10);
     });
 
-    it('should return null status when rate limiting not configured', () => {
+    it('should return null status when rate limiting not configured', async () => {
       const storage = new StorageManager({
         driver: 'local',
         credentials: { localPath: TEST_UPLOAD_DIR },
       });
 
-      expect(storage.getRateLimitStatus()).toBeNull();
+      expect(await storage.getRateLimitStatus()).toBeNull();
     });
 
     it('should also rate limit view URL generation', async () => {
       const storage = new StorageManager({
         driver: 'local',
         credentials: { localPath: TEST_UPLOAD_DIR },
-        rateLimit: {
+        rateLimiter: {
           maxRequests: 2,
           windowMs: 60000,
         },
@@ -728,9 +729,9 @@ describe('StorageManager', () => {
 
       expect(uploadResult.success).toBe(true);
 
-      const deleted = await storage.deleteFile(uploadResult.fileName!);
+      const deleted = await storage.deleteFile(uploadResult.reference!);
 
-      expect(deleted).toBe(true);
+      expect(deleted.success).toBe(true);
     });
 
     it('should delete multiple files', async () => {
@@ -740,7 +741,7 @@ describe('StorageManager', () => {
       const result1 = await storage.uploadFile(file1);
       const result2 = await storage.uploadFile(file2);
 
-      const results = await storage.deleteFiles([result1.fileName!, result2.fileName!]);
+      const results = await storage.deleteFiles([result1.reference!, result2.reference!]);
 
       expect(results).toHaveLength(2);
       expect(results.every(r => r.success)).toBe(true);
@@ -766,13 +767,13 @@ describe('StorageManager', () => {
     it('should return false for non-existent file', async () => {
       const deleted = await storage.deleteFile('non-existent.txt');
 
-      expect(deleted).toBe(false);
+      expect(deleted.success).toBe(false);
     });
 
     it('should reject path traversal in delete', async () => {
       for (const path of PATH_TRAVERSAL_CASES.slice(0, 5)) {
         const deleted = await storage.deleteFile(path);
-        expect(deleted).toBe(false);
+        expect(deleted.success).toBe(false);
       }
     });
 
@@ -890,10 +891,10 @@ describe('StorageManager', () => {
       const file = createMockJpegFile();
       const uploadResult = await storage.uploadFile(file);
 
-      const validation = await storage.validateAndConfirmUpload(uploadResult.fileName!);
+      const validation = await storage.validateAndConfirmUpload(uploadResult.reference!);
 
       expect(validation.success).toBe(true);
-      expect(validation.reference).toBe(uploadResult.fileName);
+      expect(validation.reference).toBe(uploadResult.reference);
     });
 
     it('should fail validation for non-existent file', async () => {
@@ -912,48 +913,119 @@ describe('StorageManager', () => {
   });
 
   // ============================================================================
-  // DRIVER FACTORY CACHING TESTS
+  // FILE METADATA TESTS
   // ============================================================================
 
-  describe('Driver Factory Caching', () => {
-    it('should cache drivers', () => {
-      new StorageManager({
-        driver: 'local',
-        credentials: { localPath: TEST_UPLOAD_DIR },
-      });
-      new StorageManager({
-        driver: 'local',
-        credentials: { localPath: TEST_UPLOAD_DIR },
-      });
+  describe('File Metadata', () => {
+    let storage: StorageManager;
 
-      // Cache size should be 1 (same config reuses driver)
-      expect(StorageDriverFactory.getCacheSize()).toBe(1);
+    beforeEach(() => {
+      storage = new StorageManager({
+        driver: 'local',
+        credentials: { localPath: TEST_UPLOAD_DIR },
+      });
     });
 
-    it('should create separate drivers for different configs', () => {
-      StorageDriverFactory.clearCache();
+    it('should get metadata for uploaded file', async () => {
+      const file = createMockJpegFile();
+      const uploadResult = await storage.uploadFile(file);
+      expect(uploadResult.success).toBe(true);
 
-      new StorageManager({
-        driver: 'local',
-        credentials: { localPath: TEST_UPLOAD_DIR },
-      });
-      new StorageManager({
-        driver: 'local',
-        credentials: { localPath: TEST_UPLOAD_DIR + '-other' },
-      });
+      const metadata = await storage.getMetadata(uploadResult.reference!);
 
-      expect(StorageDriverFactory.getCacheSize()).toBe(2);
+      expect(metadata).not.toBeNull();
+      expect(metadata!.name).toBe(uploadResult.reference);
+      expect(metadata!.size).toBeGreaterThan(0);
+      expect(metadata!.lastModified).toBeInstanceOf(Date);
     });
 
-    it('should clear cache', () => {
-      new StorageManager({
+    it('should detect content type via magic bytes', async () => {
+      const file = createMockPdfFile();
+      const uploadResult = await storage.uploadFile(file);
+
+      const metadata = await storage.getMetadata(uploadResult.reference!);
+
+      expect(metadata).not.toBeNull();
+      expect(metadata!.contentType).toBe('application/pdf');
+    });
+
+    it('should return null for non-existent file', async () => {
+      const metadata = await storage.getMetadata('non-existent.txt');
+      expect(metadata).toBeNull();
+    });
+
+    it('should reject path traversal in getMetadata', async () => {
+      const metadata = await storage.getMetadata('../../../etc/passwd');
+      expect(metadata).toBeNull();
+    });
+
+    it('should reject null bytes in getMetadata', async () => {
+      const metadata = await storage.getMetadata('file\0name.txt');
+      expect(metadata).toBeNull();
+    });
+  });
+
+  // ============================================================================
+  // LIFECYCLE TESTS - destroy()
+  // ============================================================================
+
+  describe('Lifecycle - destroy', () => {
+    it('should clear rate limiter on destroy', async () => {
+      const storage = new StorageManager({
+        driver: 'local',
+        credentials: { localPath: TEST_UPLOAD_DIR },
+        rateLimiter: { maxRequests: 10, windowMs: 60000 },
+      });
+
+      expect(await storage.getRateLimitStatus()).not.toBeNull();
+
+      storage.destroy();
+
+      await expect(storage.getRateLimitStatus()).rejects.toThrow('StorageManager has been destroyed');
+      expect(storage.isDestroyed()).toBe(true);
+    });
+
+    it('should be safe to call destroy multiple times', () => {
+      const storage = new StorageManager({
         driver: 'local',
         credentials: { localPath: TEST_UPLOAD_DIR },
       });
 
-      StorageDriverFactory.clearCache();
+      storage.destroy();
+      expect(() => storage.destroy()).not.toThrow();
+      expect(storage.isDestroyed()).toBe(true);
+    });
 
-      expect(StorageDriverFactory.getCacheSize()).toBe(0);
+    it('should reject all operations after destroy', async () => {
+      const storage = new StorageManager({
+        driver: 'local',
+        credentials: { localPath: TEST_UPLOAD_DIR },
+      });
+
+      storage.destroy();
+
+      await expect(storage.uploadFile({} as Express.Multer.File)).rejects.toThrow('destroyed');
+      await expect(storage.deleteFile('test.txt')).rejects.toThrow('destroyed');
+      await expect(storage.listFiles()).rejects.toThrow('destroyed');
+      await expect(storage.getMetadata('test.txt')).rejects.toThrow('destroyed');
+      await expect(storage.exists('test.txt')).rejects.toThrow('destroyed');
+      await expect(storage.generateUploadUrl('test.txt')).rejects.toThrow('destroyed');
+      await expect(storage.generateViewUrl('test.txt')).rejects.toThrow('destroyed');
+    });
+
+    it('should create isolated driver instances (no shared state)', () => {
+      const storage1 = new StorageManager({
+        driver: 'local',
+        credentials: { localPath: TEST_UPLOAD_DIR },
+      });
+      const storage2 = new StorageManager({
+        driver: 'local',
+        credentials: { localPath: TEST_UPLOAD_DIR },
+      });
+
+      storage1.destroy();
+
+      expect(storage2.getDriverType()).toBe('local');
     });
   });
 
