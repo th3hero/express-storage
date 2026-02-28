@@ -172,21 +172,21 @@ describe('File Utilities - Positive Tests', () => {
       }
     });
 
-    it('should create directory if it does not exist', () => {
-      ensureDirectoryExists(testDir);
+    it('should create directory if it does not exist', async () => {
+      await ensureDirectoryExists(testDir);
       
       expect(fs.existsSync(testDir)).toBe(true);
     });
 
-    it('should not throw if directory already exists', () => {
-      ensureDirectoryExists(testDir);
+    it('should not throw if directory already exists', async () => {
+      await ensureDirectoryExists(testDir);
       
-      expect(() => ensureDirectoryExists(testDir)).not.toThrow();
+      await expect(ensureDirectoryExists(testDir)).resolves.toBeUndefined();
     });
 
-    it('should create nested directories', () => {
+    it('should create nested directories', async () => {
       const deepPath = path.join(testDir, 'deep', 'nested', 'folder');
-      ensureDirectoryExists(deepPath);
+      await ensureDirectoryExists(deepPath);
       
       expect(fs.existsSync(deepPath)).toBe(true);
     });
@@ -743,6 +743,51 @@ describe('File Utilities - Stress Tests', () => {
       expect(results.length).toBe(100);
       expect(results[0]).toBe(0);
       expect(results[99]).toBe(198);
+    });
+  });
+
+  describe('withConcurrencyLimit - AbortSignal', () => {
+    it('should reject immediately if signal is already aborted', async () => {
+      const controller = new AbortController();
+      controller.abort();
+
+      await expect(
+        withConcurrencyLimit(
+          [1, 2, 3],
+          async (item) => item,
+          { signal: controller.signal }
+        )
+      ).rejects.toThrow();
+    });
+
+    it('should abort mid-processing when signal fires', async () => {
+      const controller = new AbortController();
+      let processed = 0;
+
+      const promise = withConcurrencyLimit(
+        Array(50).fill(0),
+        async () => {
+          processed++;
+          await new Promise(r => setTimeout(r, 20));
+          return processed;
+        },
+        { maxConcurrent: 2, signal: controller.signal }
+      );
+
+      setTimeout(() => controller.abort(), 60);
+
+      await expect(promise).rejects.toThrow();
+      expect(processed).toBeLessThan(50);
+    });
+
+    it('should complete normally without signal', async () => {
+      const results = await withConcurrencyLimit(
+        [1, 2, 3],
+        async (item) => item * 2,
+        { signal: undefined }
+      );
+
+      expect(results).toEqual([2, 4, 6]);
     });
   });
 

@@ -1,6 +1,7 @@
 import path from 'path';
-import fs from 'fs';
+import fsPromises from 'fs/promises';
 import crypto from 'crypto';
+import type { StorageErrorCode } from '../types/storage.types.js';
 
 /**
  * Creates a unique filename that won't collide with existing files.
@@ -13,7 +14,7 @@ import crypto from 'crypto';
  */
 export function generateUniqueFileName(originalName: string): string {
   const timestamp = Date.now();
-  const randomSuffix = crypto.randomBytes(6).toString('hex').substring(0, 10);
+  const randomSuffix = crypto.randomBytes(5).toString('hex');
   
   // Handle dotfiles like .gitignore or .env (they have no extension)
   let extension: string;
@@ -91,6 +92,31 @@ export function validateFileName(fileName: string): string | null {
 }
 
 /**
+ * Returns true if the value contains path traversal sequences (`..`) or null bytes.
+ * Checks both the raw value and its URL-decoded form to catch encoded attacks
+ * like `%2e%2e/etc/passwd`.
+ */
+export function hasPathTraversal(value: string): boolean {
+  if (value.includes('..') || value.includes('\0')) {
+    return true;
+  }
+  try {
+    const decoded = decodeURIComponent(value);
+    return decoded.includes('..') || decoded.includes('\0');
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * URL-encodes each segment of a `/`-separated path individually.
+ * Preserves the `/` separators while encoding special characters within segments.
+ */
+export function encodePathSegments(filePath: string): string {
+  return filePath.split('/').map(segment => encodeURIComponent(segment)).join('/');
+}
+
+/**
  * Creates a date-based folder path: YYYY/MM
  * 
  * Uses UTC to keep things consistent across timezones.
@@ -108,10 +134,8 @@ export function createMonthBasedPath(basePath: string): string {
  * Creates a directory if it doesn't exist.
  * Also creates any parent directories needed (recursive).
  */
-export function ensureDirectoryExists(dirPath: string): void {
-  if (!fs.existsSync(dirPath)) {
-    fs.mkdirSync(dirPath, { recursive: true });
-  }
+export async function ensureDirectoryExists(dirPath: string): Promise<void> {
+  await fsPromises.mkdir(dirPath, { recursive: true });
 }
 
 /**
@@ -267,6 +291,172 @@ export async function withRetry<T>(
 }
 
 /**
+ * Returns true if the string is a valid MIME type format (type/subtype).
+ */
+export function isValidMimeType(mimeType: string): boolean {
+  return /^[a-zA-Z0-9][a-zA-Z0-9!#$&\-^_.+]*\/[a-zA-Z0-9][a-zA-Z0-9!#$&\-^_.+]*$/.test(mimeType);
+}
+
+/**
+ * Validates a folder path for use in storage operations.
+ * Returns an error message if invalid, null if OK.
+ */
+export function validateFolderPath(folder: string): string | null {
+  if (hasPathTraversal(folder)) {
+    return folder.includes('..')
+      ? 'Folder path cannot contain path traversal sequences (..)'
+      : 'Folder path cannot contain null bytes';
+  }
+
+  if (/[<>:"|?*\\;$`']/.test(folder)) {
+    return "Folder path contains invalid characters. Avoid: < > : \" | ? * \\ ; $ ` '";
+  }
+
+  if (/\/{2,}/.test(folder)) {
+    return 'Folder path cannot contain consecutive slashes';
+  }
+
+  return null;
+}
+
+/**
+ * Validates a file against upload constraints (size, MIME type, extension).
+ * Returns `{ error, code }` on failure, `null` if the file passes all checks.
+ */
+export function validateFileForUpload(
+  file: Express.Multer.File,
+  options: { maxSize?: number; allowedMimeTypes?: string[]; allowedExtensions?: string[] }
+): { error: string; code: StorageErrorCode } | null {
+  if (!file) {
+    return { error: 'No file provided', code: 'NO_FILE' };
+  }
+
+  if (options.maxSize !== undefined && file.size > options.maxSize) {
+    return { error: `File size ${file.size} exceeds maximum allowed size of ${options.maxSize} bytes`, code: 'FILE_TOO_LARGE' };
+  }
+
+  if (options.allowedMimeTypes) {
+    if (options.allowedMimeTypes.length === 0) {
+      return { error: 'No MIME types are allowed (allowedMimeTypes is empty). To allow all types, omit this option or use ["*/*"]', code: 'INVALID_MIME_TYPE' };
+    }
+
+    const allowsAll = options.allowedMimeTypes.includes('*/*') || options.allowedMimeTypes.includes('*');
+
+    if (!allowsAll && !options.allowedMimeTypes.includes(file.mimetype)) {
+      return { error: `File type '${file.mimetype}' is not allowed. Allowed types: ${options.allowedMimeTypes.join(', ')}`, code: 'INVALID_MIME_TYPE' };
+    }
+  }
+
+  if (options.allowedExtensions) {
+    if (options.allowedExtensions.length === 0) {
+      return { error: 'No file extensions are allowed (allowedExtensions is empty). To allow all extensions, use ["*"]', code: 'INVALID_EXTENSION' };
+    }
+
+    const ext = getFileExtension(file.originalname || '').toLowerCase();
+    const normalizedAllowed = options.allowedExtensions.map(e => e.toLowerCase());
+    const SPECIAL_VALUES = ['', '*', 'none'];
+
+    if (ext === '') {
+      const allowsNoExtension = normalizedAllowed.some(e => SPECIAL_VALUES.includes(e));
+      if (!allowsNoExtension) {
+        return { error: `File has no extension. Allowed extensions: ${options.allowedExtensions.join(', ')} (use '' or '*' to allow files without extensions)`, code: 'INVALID_EXTENSION' };
+      }
+    } else {
+      const normalizedExtensions = normalizedAllowed
+        .filter(e => !SPECIAL_VALUES.includes(e))
+        .map(e => e.startsWith('.') ? e : `.${e}`);
+      const allowsAllExt = normalizedAllowed.includes('*');
+
+      if (!allowsAllExt && !normalizedExtensions.includes(ext)) {
+        return { error: `File extension '${ext}' is not allowed. Allowed extensions: ${options.allowedExtensions.join(', ')}`, code: 'INVALID_EXTENSION' };
+      }
+    }
+  }
+
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// MIME type detection from file content (magic bytes)
+// ---------------------------------------------------------------------------
+
+const MAGIC_SIGNATURES: Array<{ bytes: number[]; mimeType: string; offset?: number }> = [
+  { bytes: [0xFF, 0xD8, 0xFF], mimeType: 'image/jpeg' },
+  { bytes: [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A], mimeType: 'image/png' },
+  { bytes: [0x47, 0x49, 0x46, 0x38, 0x37, 0x61], mimeType: 'image/gif' },
+  { bytes: [0x47, 0x49, 0x46, 0x38, 0x39, 0x61], mimeType: 'image/gif' },
+  { bytes: [0x42, 0x4D], mimeType: 'image/bmp' },
+  { bytes: [0x25, 0x50, 0x44, 0x46], mimeType: 'application/pdf' },
+  { bytes: [0x50, 0x4B, 0x03, 0x04], mimeType: 'application/zip' },
+  { bytes: [0x50, 0x4B, 0x05, 0x06], mimeType: 'application/zip' },
+  { bytes: [0x50, 0x4B, 0x07, 0x08], mimeType: 'application/zip' },
+  { bytes: [0x1F, 0x8B], mimeType: 'application/gzip' },
+  { bytes: [0x52, 0x61, 0x72, 0x21, 0x1A, 0x07], mimeType: 'application/vnd.rar' },
+  { bytes: [0x37, 0x7A, 0xBC, 0xAF, 0x27, 0x1C], mimeType: 'application/x-7z-compressed' },
+  { bytes: [0x49, 0x44, 0x33], mimeType: 'audio/mpeg' },
+  { bytes: [0xFF, 0xFB], mimeType: 'audio/mpeg' },
+  { bytes: [0xFF, 0xFA], mimeType: 'audio/mpeg' },
+  { bytes: [0x4F, 0x67, 0x67, 0x53], mimeType: 'audio/ogg' },
+  { bytes: [0x66, 0x74, 0x79, 0x70], mimeType: 'video/mp4', offset: 4 },
+  { bytes: [0x4D, 0x5A], mimeType: 'application/x-msdownload' },
+  { bytes: [0x7F, 0x45, 0x4C, 0x46], mimeType: 'application/x-executable' },
+];
+
+/**
+ * Detects MIME type from file content by examining magic bytes.
+ *
+ * Useful in `beforeUpload` hooks to verify that a file's actual content
+ * matches its declared MIME type — particularly for cloud uploads where
+ * the driver trusts the client-provided MIME type.
+ *
+ * @param data - Buffer containing at least the first 12 bytes of the file
+ * @returns Detected MIME type, or undefined if unknown
+ *
+ * @example
+ * const storage = new StorageManager({
+ *   hooks: {
+ *     beforeUpload: async (file) => {
+ *       const actual = detectMimeType(file.buffer);
+ *       if (actual && actual !== file.mimetype) {
+ *         throw new Error(`Content mismatch: declared ${file.mimetype}, detected ${actual}`);
+ *       }
+ *     },
+ *   },
+ * });
+ */
+export function detectMimeType(data: Buffer): string | undefined {
+  if (!data || data.length === 0) return undefined;
+
+  for (const sig of MAGIC_SIGNATURES) {
+    const offset = sig.offset || 0;
+    if (offset + sig.bytes.length > data.length) continue;
+
+    let match = true;
+    for (let i = 0; i < sig.bytes.length; i++) {
+      if (data[offset + i] !== sig.bytes[i]) {
+        match = false;
+        break;
+      }
+    }
+    if (match) return sig.mimeType;
+  }
+
+  // RIFF container: bytes 0-3 = 'RIFF', bytes 8-11 = sub-format
+  if (data.length >= 12 &&
+      data[0] === 0x52 && data[1] === 0x49 &&
+      data[2] === 0x46 && data[3] === 0x46) {
+    const sub = data.subarray(8, 12).toString('ascii');
+    switch (sub) {
+      case 'WEBP': return 'image/webp';
+      case 'WAVE': return 'audio/wav';
+      case 'AVI ': return 'video/x-msvideo';
+    }
+  }
+
+  return undefined;
+}
+
+/**
  * Pauses execution for the specified number of milliseconds.
  */
 export function sleep(ms: number): Promise<void> {
@@ -279,6 +469,8 @@ export function sleep(ms: number): Promise<void> {
 export interface ConcurrencyOptions {
   /** Maximum parallel operations. Default: 10 */
   maxConcurrent?: number;
+  /** Pass an AbortSignal to cancel remaining work mid-flight. */
+  signal?: AbortSignal | undefined;
 }
 
 /**
@@ -287,15 +479,11 @@ export interface ConcurrencyOptions {
  * Prevents overwhelming APIs or running out of resources by limiting
  * how many operations run at once.
  * 
- * Implementation uses pre-assigned chunk-based processing to avoid any
- * potential race conditions with shared index counters. Each worker gets
- * its own set of indices to process.
- * 
- * Note: The input array is snapshotted at the start to prevent issues
- * if the caller modifies it during processing.
+ * Uses a shared-index work-stealing approach: workers pull the next
+ * available item as soon as they finish one, ensuring even load
+ * distribution regardless of per-item processing time.
  * 
  * @example
- * // Upload 100 files, but only 10 at a time
  * const results = await withConcurrencyLimit(
  *   files,
  *   (file) => uploadFile(file),
@@ -307,42 +495,40 @@ export async function withConcurrencyLimit<T, R>(
   operation: (item: T, index: number) => Promise<R>,
   options: ConcurrencyOptions = {}
 ): Promise<R[]> {
-  const { maxConcurrent = 10 } = options;
+  const { maxConcurrent = 10, signal } = options;
   
   if (items.length === 0) {
     return [];
   }
   
-  // Snapshot the array to prevent issues if caller modifies it during processing
+  signal?.throwIfAborted();
+  
   const itemsCopy = [...items];
   const itemCount = itemsCopy.length;
   
-  // For small batches, just process everything at once
   if (itemCount <= maxConcurrent) {
     return Promise.all(itemsCopy.map((item, index) => operation(item, index)));
   }
   
   const results: R[] = new Array(itemCount);
   const workerCount = Math.min(maxConcurrent, itemCount);
+  let nextIndex = 0;
   
-  // Pre-assign indices to each worker to avoid any race conditions
-  // Each worker gets a dedicated set of indices: worker 0 gets [0, workerCount, 2*workerCount, ...],
-  // worker 1 gets [1, workerCount+1, 2*workerCount+1, ...], etc.
-  const createWorker = (workerId: number): Promise<void> => {
-    return (async () => {
-      for (let index = workerId; index < itemCount; index += workerCount) {
-        const item = itemsCopy[index];
-        if (item !== undefined) {
-          results[index] = await operation(item, index);
-        }
+  const createWorker = async (): Promise<void> => {
+    while (nextIndex < itemCount) {
+      signal?.throwIfAborted();
+      const index = nextIndex++;
+      if (index >= itemCount) break;
+      const item = itemsCopy[index];
+      if (item !== undefined) {
+        results[index] = await operation(item, index);
       }
-    })();
+    }
   };
   
-  // Start all workers with their pre-assigned index ranges
   const workers: Promise<void>[] = [];
   for (let i = 0; i < workerCount; i++) {
-    workers.push(createWorker(i));
+    workers.push(createWorker());
   }
   
   await Promise.all(workers);
