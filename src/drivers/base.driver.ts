@@ -1,31 +1,15 @@
 import fs from 'fs';
 import fsPromises from 'fs/promises';
-import { Readable } from 'stream';
-import { IStorageDriver, FileUploadResult, PresignedUrlResult, PresignedUrlSuccess, StorageConfig, BlobValidationOptions, BlobValidationResult, BlobValidationSuccess, BlobValidationError, ListFilesResult, UploadOptions, DeleteResult, StorageErrorCode, FileInfo } from '../types/storage.types.js';
-import { generateUniqueFileName } from '../utils/file.utils.js';
+import { Readable, Writable } from 'stream';
+import { IStorageDriver, FileUploadResult, PresignedUrlResult, PresignedUrlSuccess, StorageConfig, BlobValidationOptions, BlobValidationResult, BlobValidationSuccess, BlobValidationError, ListFilesResult, UploadOptions, DeleteResult, StorageErrorCode, FileInfo, StorageFile } from '../types/storage.types.js';
+import { generateUniqueFileName, hasPathTraversal, joinStoragePath } from '../utils/file.utils.js';
+import {
+  DEFAULT_PRESIGNED_URL_EXPIRY,
+  MAX_PRESIGNED_URL_EXPIRY,
+  MIN_PRESIGNED_URL_EXPIRY,
+  STREAM_THRESHOLD,
+} from '../constants.js';
 
-/** Threshold for using streaming uploads (100MB) */
-const STREAM_THRESHOLD = 100 * 1024 * 1024;
-
-/**
- * BaseStorageDriver - The foundation that all storage drivers build upon.
- * 
- * This abstract class provides common functionality that every driver needs:
- * filename generation, file validation, content reading, and result formatting.
- * 
- * If you're building a custom driver, extend this class and implement the
- * abstract methods. You'll get all the helper methods for free.
- * 
- * **Security validation contract:**
- * - **StorageManager** (layer 1): validates raw user input at the public API
- *   boundary — path traversal, MIME type format, file size limits.
- * - **Driver** (layer 2): decodes URL-encoded filenames via `decodeFileName()`
- *   and rejects traversal/encoding attacks. This ensures safety when drivers
- *   are used directly without StorageManager.
- * - **Local driver internals** (layer 3): containment checks (`path.resolve`
- *   stays within `basePath`), symlink rejection, file-type verification.
- *   These are filesystem-specific concerns, not input validation.
- */
 export abstract class BaseStorageDriver implements IStorageDriver {
   protected readonly config: StorageConfig;
   protected readonly presignedMode: boolean;
@@ -35,24 +19,11 @@ export abstract class BaseStorageDriver implements IStorageDriver {
     this.presignedMode = config.driver.endsWith('-presigned');
   }
 
-  /**
-   * Builds the full storage path by combining the bucket path with the filename.
-   * For example: 'uploads' + 'photo.jpg' = 'uploads/photo.jpg'
-   */
   protected buildFilePath(fileName: string): string {
-    const bucketPath = this.config.bucketPath?.trim();
-    if (!bucketPath || bucketPath === '' || bucketPath === '/') {
-      return fileName;
-    }
-    const normalizedPath = bucketPath.replace(/^\/+|\/+$/g, '');
-    return `${normalizedPath}/${fileName}`;
+    return joinStoragePath(fileName, this.config.bucketPath);
   }
 
-  /**
-   * Uploads a single file. Each driver implements this differently.
-   * When presignedMode is true, returns a presigned URL instead of uploading directly.
-   */
-  abstract upload(file: Express.Multer.File, options?: UploadOptions): Promise<FileUploadResult>;
+  abstract upload(file: StorageFile, options?: UploadOptions): Promise<FileUploadResult>;
 
   abstract generateUploadUrl(fileName: string, contentType?: string, fileSize?: number): Promise<PresignedUrlResult>;
 
@@ -64,25 +35,14 @@ export abstract class BaseStorageDriver implements IStorageDriver {
 
   abstract getMetadata(reference: string): Promise<FileInfo | null>;
 
-  /**
-   * Releases SDK clients and internal resources. Override in drivers that
-   * hold connection pools (S3Client, GCS Storage, Azure BlobServiceClient).
-   * Default implementation is a no-op.
-   */
+  
   destroy(): void {
     // No-op — subclasses override to close SDK clients
   }
 
-  /**
-   * Creates a unique filename that won't collide with existing files.
-   */
   protected generateFileName(originalName: string): string {
     return generateUniqueFileName(originalName);
   }
-
-  // ---------------------------------------------------------------------------
-  // Result builders — return proper discriminated union variants
-  // ---------------------------------------------------------------------------
 
   protected createSuccessResult(reference: string, fileUrl: string): FileUploadResult {
     return { success: true, reference, fileUrl };
@@ -103,19 +63,7 @@ export abstract class BaseStorageDriver implements IStorageDriver {
     return { success: false, error, code };
   }
 
-  // ---------------------------------------------------------------------------
-  // File validation
-  // ---------------------------------------------------------------------------
-
-  /**
-   * Validates a file before upload.
-   * 
-   * Checks: missing file, no name, no MIME type, empty content, and
-   * maxFileSize from config (enforced here so direct driver usage is safe).
-   * 
-   * Works with both Multer memory storage (file.buffer) and disk storage (file.path).
-   */
-  protected async validateFile(file: Express.Multer.File): Promise<{ errors: string[]; resolvedSize: number }> {
+  protected async validateFile(file: StorageFile): Promise<{ errors: string[]; resolvedSize: number }> {
     const errors: string[] = [];
 
     if (!file) {
@@ -144,7 +92,8 @@ export abstract class BaseStorageDriver implements IStorageDriver {
 
     if (hasPath && !hasBuffer) {
       try {
-        const stats = await fsPromises.stat(file.path);
+        const diskPath = file.path as string;
+        const stats = await fsPromises.stat(diskPath);
         if (stats.size === 0) {
           errors.push('File is empty (0 bytes)');
         }
@@ -155,7 +104,7 @@ export abstract class BaseStorageDriver implements IStorageDriver {
     }
 
     if (hasBuffer && !resolvedSize) {
-      resolvedSize = file.buffer.length;
+      resolvedSize = file.buffer?.length ?? 0;
     }
 
     if (this.config.maxFileSize && resolvedSize > this.config.maxFileSize) {
@@ -165,20 +114,9 @@ export abstract class BaseStorageDriver implements IStorageDriver {
     return { errors, resolvedSize };
   }
 
-  // ---------------------------------------------------------------------------
-  // File content helpers
-  // ---------------------------------------------------------------------------
-
-  /**
-   * Reads the file content, whether it's in memory or on disk.
-   * 
-   * @warning **MEMORY IMPLICATIONS**: Loads the ENTIRE file into memory.
-   * ALWAYS call `shouldUseStreaming(file)` first and use `getFileStream()` 
-   * for files larger than 100MB.
-   */
-  protected async getFileContent(file: Express.Multer.File): Promise<Buffer> {
+  protected async getFileContent(file: StorageFile): Promise<Buffer> {
     if ((file.buffer?.length ?? 0) > 0) {
-      return file.buffer;
+      return file.buffer as Buffer;
     }
     
     if (file.path) {
@@ -188,13 +126,9 @@ export abstract class BaseStorageDriver implements IStorageDriver {
     throw new Error('File has neither buffer nor path - cannot read content');
   }
 
-  /**
-   * Returns a readable stream for the file content.
-   * Use this instead of getFileContent() for large files (>100MB).
-   */
-  protected getFileStream(file: Express.Multer.File): Readable {
+  protected getFileStream(file: StorageFile): Readable {
     if ((file.buffer?.length ?? 0) > 0) {
-      return Readable.from(file.buffer);
+      return Readable.from(file.buffer as Buffer);
     }
     
     if (file.path) {
@@ -204,81 +138,81 @@ export abstract class BaseStorageDriver implements IStorageDriver {
     throw new Error('File has neither buffer nor path - cannot create stream');
   }
 
-  /**
-   * Determines if a file should use streaming based on its size.
-   * Files larger than 100MB benefit from streaming to reduce memory usage.
-   */
   protected shouldUseStreaming(fileSize: number): boolean {
     return fileSize > STREAM_THRESHOLD;
   }
 
-  /**
-   * Gets the file size, reading from disk if necessary.
-   */
-  protected async getFileSize(file: Express.Multer.File): Promise<number> {
-    if (file.size && file.size > 0) {
-      return file.size;
-    }
-    
-    if (file.buffer?.length) {
-      return file.buffer.length;
-    }
-    
-    if (file.path) {
-      try {
-        const stats = await fsPromises.stat(file.path);
-        return stats.size;
-      } catch {
-        return 0;
+  protected pipeWithAbort(
+    readStream: Readable,
+    writeStream: Writable,
+    signal: AbortSignal | undefined,
+    onErrorCleanup?: () => void
+  ): Promise<void> {
+    return new Promise((resolve, reject) => {
+      let settled = false;
+
+      const cleanupAbort = (): void => {
+        signal?.removeEventListener('abort', onAbort);
+      };
+
+      const fail = (err: unknown): void => {
+        if (settled) return;
+        settled = true;
+        cleanupAbort();
+        readStream.destroy();
+        writeStream.destroy();
+        onErrorCleanup?.();
+        reject(err instanceof Error ? err : new Error(String(err)));
+      };
+
+      const succeed = (): void => {
+        if (settled) return;
+        settled = true;
+        cleanupAbort();
+        resolve();
+      };
+
+      const onAbort = (): void => {
+        const reason = signal?.reason;
+        fail(reason instanceof Error ? reason : new Error('The operation was aborted'));
+      };
+
+      if (signal?.aborted) {
+        onAbort();
+        return;
       }
-    }
-    
-    return 0;
+
+      signal?.addEventListener('abort', onAbort, { once: true });
+      readStream.on('error', fail);
+      writeStream.on('error', fail);
+      writeStream.on('finish', succeed);
+      readStream.pipe(writeStream);
+    });
   }
 
-  /**
-   * Cleans up a Multer disk storage temp file if it exists.
-   * Call this in upload error paths to prevent temp file leaks.
-   */
-  protected async cleanupTempFile(file: Express.Multer.File): Promise<void> {
+  protected async cleanupTempFile(file: StorageFile): Promise<void> {
     if (file.path) {
       try { await fsPromises.unlink(file.path); } catch { /* best-effort */ }
     }
   }
 
-  // ---------------------------------------------------------------------------
-  // Presigned URL helpers
-  // ---------------------------------------------------------------------------
-
-  /**
-   * Returns how long presigned URLs should be valid (in seconds).
-   * Clamped to [1, 604800] (1 second to 7 days). Default: 600 (10 minutes).
-   */
   protected getPresignedUrlExpiry(): number {
-    const MAX_EXPIRY = 604800;
-    const MIN_EXPIRY = 1;
-    const DEFAULT_EXPIRY = 600;
-    
     const expiry = this.config.presignedUrlExpiry;
     
     if (expiry === undefined || Number.isNaN(expiry)) {
-      return DEFAULT_EXPIRY;
+      return DEFAULT_PRESIGNED_URL_EXPIRY;
     }
     
-    if (expiry < MIN_EXPIRY) {
-      return MIN_EXPIRY;
+    if (expiry < MIN_PRESIGNED_URL_EXPIRY) {
+      return MIN_PRESIGNED_URL_EXPIRY;
     }
-    if (expiry > MAX_EXPIRY) {
-      return MAX_EXPIRY;
+    if (expiry > MAX_PRESIGNED_URL_EXPIRY) {
+      return MAX_PRESIGNED_URL_EXPIRY;
     }
     
     return expiry;
   }
 
-  /**
-   * Decodes a URL-encoded filename and checks for path traversal attacks.
-   * Throws on malformed encoding or traversal sequences.
-   */
   protected decodeFileName(fileName: string): string {
     let decoded: string;
     try {
@@ -286,15 +220,12 @@ export abstract class BaseStorageDriver implements IStorageDriver {
     } catch {
       throw new Error('Invalid fileName: malformed URL encoding');
     }
-    if (decoded.includes('..') || decoded.includes('\0')) {
+    if (hasPathTraversal(decoded)) {
       throw new Error('Invalid fileName: path traversal sequences are not allowed');
     }
     return decoded;
   }
 
-  /**
-   * Validates and clamps maxResults for list operations.
-   */
   protected validateMaxResults(maxResults: number): number {
     return Math.floor(Math.max(1, Math.min(
       Number.isNaN(maxResults) ? 1000 : maxResults,
@@ -302,11 +233,7 @@ export abstract class BaseStorageDriver implements IStorageDriver {
     )));
   }
 
-  /**
-   * Shared upload logic for presigned mode.
-   * Validates the file, generates a unique name, and returns a presigned upload URL.
-   */
-  protected async presignedUpload(file: Express.Multer.File): Promise<FileUploadResult> {
+  protected async presignedUpload(file: StorageFile): Promise<FileUploadResult> {
     try {
       const { errors, resolvedSize } = await this.validateFile(file);
       if (errors.length > 0) {
@@ -334,17 +261,62 @@ export abstract class BaseStorageDriver implements IStorageDriver {
     }
   }
 
-  // ---------------------------------------------------------------------------
-  // Upload validation (post-upload confirmation)
-  // ---------------------------------------------------------------------------
+  protected async executeDirectUpload(
+    file: StorageFile,
+    options: UploadOptions | undefined,
+    providerLabel: string,
+    put: (ctx: {
+      file: StorageFile;
+      key: string;
+      resolvedSize: number;
+      options?: UploadOptions | undefined;
+    }) => Promise<string>
+  ): Promise<FileUploadResult> {
+    try {
+      const { errors, resolvedSize } = await this.validateFile(file);
+      if (errors.length > 0) {
+        return this.createErrorResult(errors.join(', '), 'VALIDATION_FAILED');
+      }
 
-  /**
-   * Confirms that an upload completed successfully.
-   * 
-   * The default implementation just checks if the file exists.
-   * Azure overrides this to validate file properties since Azure
-   * doesn't enforce constraints at the presigned URL level.
-   */
+      const fileName = this.generateFileName(file.originalname);
+      const key = this.buildFilePath(fileName);
+      const fileUrl = await put({ file, key, resolvedSize, options });
+      return this.createSuccessResult(key, fileUrl);
+    } catch (error) {
+      await this.cleanupTempFile(file);
+      return this.createErrorResult(
+        error instanceof Error ? error.message : `Failed to upload file to ${providerLabel}`
+      );
+    }
+  }
+
+  protected async confirmUploadFromMetadata(
+    reference: string,
+    options: BlobValidationOptions | undefined,
+    fetchActual: () => Promise<{ contentType?: string | undefined; fileSize?: number | undefined }>,
+    notFoundFallback = 'File not found or access denied'
+  ): Promise<BlobValidationResult> {
+    try {
+      const actual = await fetchActual();
+      const validationError = await this.checkUploadedFileMetadata(reference, actual, options);
+      if (validationError) return validationError;
+
+      const viewResult = await this.generateViewUrl(reference);
+      return this.buildValidationSuccess(
+        reference,
+        viewResult.success ? viewResult.viewUrl : undefined,
+        actual.contentType,
+        actual.fileSize
+      );
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : notFoundFallback,
+        code: 'FILE_NOT_FOUND',
+      };
+    }
+  }
+
   async validateAndConfirmUpload(reference: string, _options?: BlobValidationOptions): Promise<BlobValidationResult> {
     const viewResult = await this.generateViewUrl(reference);
     
@@ -367,11 +339,6 @@ export abstract class BaseStorageDriver implements IStorageDriver {
     };
   }
 
-  /**
-   * Validates uploaded file metadata against expected values.
-   * Shared by cloud drivers to avoid duplicating content-type and file-size checks.
-   * Returns a validation error result if checks fail, null if everything passes.
-   */
   protected async checkUploadedFileMetadata(
     reference: string,
     actual: { contentType?: string | undefined; fileSize?: number | undefined },
@@ -398,9 +365,6 @@ export abstract class BaseStorageDriver implements IStorageDriver {
     return null;
   }
 
-  /**
-   * Builds a successful validation result with optional view URL and metadata.
-   */
   protected buildValidationSuccess(
     reference: string,
     viewUrl?: string,

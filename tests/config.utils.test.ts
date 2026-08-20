@@ -4,13 +4,12 @@
  * Tests for config loading, validation, and environment handling.
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import {
   loadEnvironmentConfig,
   environmentToStorageConfig,
   validateStorageConfig,
   loadAndValidateConfig,
-  resetDotenvInitialization,
 } from '../src/utils/config.utils.js';
 import type { StorageConfig } from '../src/types/storage.types.js';
 
@@ -42,15 +41,7 @@ function withEnv(env: Record<string, string | undefined>, fn: () => void) {
   }
 }
 
-// ============================================================================
-// POSITIVE TEST CASES
-// ============================================================================
-
 describe('Config Utilities - Positive Tests', () => {
-  beforeEach(() => {
-    resetDotenvInitialization();
-  });
-
   describe('loadEnvironmentConfig', () => {
     it('should load FILE_DRIVER from environment', () => {
       withEnv({ FILE_DRIVER: 's3' }, () => {
@@ -347,7 +338,6 @@ describe('Config Utilities - Positive Tests', () => {
         FILE_DRIVER: 'local',
         LOCAL_PATH: 'test-uploads',
       }, () => {
-        resetDotenvInitialization();
         const { config, validation } = loadAndValidateConfig();
         
         expect(config.driver).toBe('local');
@@ -357,15 +347,7 @@ describe('Config Utilities - Positive Tests', () => {
   });
 });
 
-// ============================================================================
-// NEGATIVE TEST CASES
-// ============================================================================
-
 describe('Config Utilities - Negative Tests', () => {
-  beforeEach(() => {
-    resetDotenvInitialization();
-  });
-
   describe('validateStorageConfig', () => {
     it('should reject missing driver', () => {
       const config = {} as StorageConfig;
@@ -612,15 +594,7 @@ describe('Config Utilities - Negative Tests', () => {
   });
 });
 
-// ============================================================================
-// EDGE CASE TESTS
-// ============================================================================
-
 describe('Config Utilities - Edge Cases', () => {
-  beforeEach(() => {
-    resetDotenvInitialization();
-  });
-
   describe('validateStorageConfig', () => {
     it('should handle empty string driver', () => {
       const config: StorageConfig = {

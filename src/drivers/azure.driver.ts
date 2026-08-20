@@ -3,56 +3,21 @@ import type {
   ContainerClient as ContainerClientType,
 } from '@azure/storage-blob';
 import { BaseStorageDriver } from './base.driver.js';
-import { FileUploadResult, PresignedUrlResult, StorageConfig, BlobValidationOptions, BlobValidationResult, ListFilesResult, UploadOptions, FileInfo, DeleteResult } from '../types/storage.types.js';
+import { FileUploadResult, PresignedUrlResult, StorageConfig, BlobValidationOptions, BlobValidationResult, ListFilesResult, UploadOptions, FileInfo, DeleteResult, StorageFile } from '../types/storage.types.js';
 import { encodePathSegments } from '../utils/file.utils.js';
+import { isNotFoundError } from '../utils/errors.js';
+import { createLazyImport } from '../utils/lazy-import.js';
 
-// Lazy SDK loaders — modules are imported on first use, not at import time.
+const loadAzureBlobSDK = createLazyImport(
+  () => import('@azure/storage-blob'),
+  '@azure/storage-blob is required for Azure storage.\nInstall: npm install @azure/storage-blob @azure/identity'
+);
 
-let _azureBlobMod: Promise<typeof import('@azure/storage-blob')> | undefined;
-function loadAzureBlobSDK(): Promise<typeof import('@azure/storage-blob')> {
-  if (!_azureBlobMod) {
-    _azureBlobMod = import('@azure/storage-blob').catch(() => {
-      _azureBlobMod = undefined;
-      throw new Error(
-        '@azure/storage-blob is required for Azure storage.\n' +
-        'Install: npm install @azure/storage-blob @azure/identity'
-      );
-    });
-  }
-  return _azureBlobMod;
-}
+const loadAzureIdentity = createLazyImport(
+  () => import('@azure/identity'),
+  '@azure/identity is required for Azure Managed Identity authentication.\nInstall: npm install @azure/identity'
+);
 
-let _azureIdentityMod: Promise<typeof import('@azure/identity')> | undefined;
-function loadAzureIdentity(): Promise<typeof import('@azure/identity')> {
-  if (!_azureIdentityMod) {
-    _azureIdentityMod = import('@azure/identity').catch(() => {
-      _azureIdentityMod = undefined;
-      throw new Error(
-        '@azure/identity is required for Azure Managed Identity authentication.\n' +
-        'Install: npm install @azure/identity'
-      );
-    });
-  }
-  return _azureIdentityMod;
-}
-
-/**
- * AzureStorageDriver - Handles file operations with Azure Blob Storage.
- * 
- * Supports three authentication methods:
- * 1. Connection string (simplest — recommended for getting started)
- * 2. Account name + Account key (more control)
- * 3. Managed Identity (when running on Azure — no secrets needed!)
- * 
- * Important: SAS URL generation requires an account key.
- * Managed Identity works great for direct uploads but can't create presigned URLs.
- * 
- * When driver is 'azure-presigned', upload() returns SAS URLs instead of
- * uploading directly. Always call validateAndConfirmUpload() after client
- * uploads — Azure doesn't enforce constraints on SAS URLs.
- * 
- * Required packages: @azure/storage-blob, @azure/identity
- */
 export class AzureStorageDriver extends BaseStorageDriver {
   private _blobServiceClient?: BlobServiceClientType | undefined;
   private _containerClient?: ContainerClientType | undefined;
@@ -138,29 +103,16 @@ export class AzureStorageDriver extends BaseStorageDriver {
     this._containerClient = undefined;
   }
 
-  /**
-   * Uploads a file to Azure, or returns a SAS URL when in presigned mode.
-   * 
-   * For large files (>100MB), uses streaming upload to reduce
-   * memory usage and improve reliability.
-   */
-  async upload(file: Express.Multer.File, options?: UploadOptions): Promise<FileUploadResult> {
+  async upload(file: StorageFile, options?: UploadOptions): Promise<FileUploadResult> {
     if (this.presignedMode) {
       return this.presignedUpload(file);
     }
-    
-    try {
-      const { errors: validationErrors, resolvedSize } = await this.validateFile(file);
-      if (validationErrors.length > 0) {
-        return this.createErrorResult(validationErrors.join(', '), 'VALIDATION_FAILED');
-      }
 
-      const fileName = this.generateFileName(file.originalname);
-      const blobPath = this.buildFilePath(fileName);
+    return this.executeDirectUpload(file, options, 'Azure', async ({ file: uploadFile, key, resolvedSize, options: uploadOptions }) => {
       const containerClient = await this.ensureContainerClient();
-      const blockBlobClient = containerClient.getBlockBlobClient(blobPath);
-      
-      const uploadOptions: {
+      const blockBlobClient = containerClient.getBlockBlobClient(key);
+
+      const blobOptions: {
         blobHTTPHeaders: {
           blobContentType: string;
           blobCacheControl?: string;
@@ -169,35 +121,34 @@ export class AzureStorageDriver extends BaseStorageDriver {
         metadata?: Record<string, string>;
       } = {
         blobHTTPHeaders: {
-          blobContentType: options?.contentType || file.mimetype,
+          blobContentType: uploadOptions?.contentType || uploadFile.mimetype,
         },
       };
 
-      if (options?.cacheControl) {
-        uploadOptions.blobHTTPHeaders.blobCacheControl = options.cacheControl;
+      if (uploadOptions?.cacheControl) {
+        blobOptions.blobHTTPHeaders.blobCacheControl = uploadOptions.cacheControl;
       }
-      if (options?.contentDisposition) {
-        uploadOptions.blobHTTPHeaders.blobContentDisposition = options.contentDisposition;
+      if (uploadOptions?.contentDisposition) {
+        blobOptions.blobHTTPHeaders.blobContentDisposition = uploadOptions.contentDisposition;
       }
-      if (options?.metadata) {
-        uploadOptions.metadata = options.metadata;
+      if (uploadOptions?.metadata) {
+        blobOptions.metadata = uploadOptions.metadata;
       }
 
-      options?.signal?.throwIfAborted();
-
-      const abortSignal = options?.signal;
+      uploadOptions?.signal?.throwIfAborted();
+      const abortSignal = uploadOptions?.signal;
 
       if (this.shouldUseStreaming(resolvedSize)) {
-        const fileStream = this.getFileStream(file);
+        const fileStream = this.getFileStream(uploadFile);
         const streamOptions: {
-          blobHTTPHeaders: typeof uploadOptions.blobHTTPHeaders;
+          blobHTTPHeaders: typeof blobOptions.blobHTTPHeaders;
           metadata?: Record<string, string>;
           abortSignal?: AbortSignal;
         } = {
-          blobHTTPHeaders: uploadOptions.blobHTTPHeaders,
+          blobHTTPHeaders: blobOptions.blobHTTPHeaders,
         };
-        if (uploadOptions.metadata) {
-          streamOptions.metadata = uploadOptions.metadata;
+        if (blobOptions.metadata) {
+          streamOptions.metadata = blobOptions.metadata;
         }
         if (abortSignal) {
           streamOptions.abortSignal = abortSignal;
@@ -209,31 +160,17 @@ export class AzureStorageDriver extends BaseStorageDriver {
           streamOptions
         );
       } else {
-        const fileContent = await this.getFileContent(file);
+        const fileContent = await this.getFileContent(uploadFile);
         await blockBlobClient.uploadData(fileContent, {
-          ...uploadOptions,
+          ...blobOptions,
           ...(abortSignal ? { abortSignal } : {}),
         });
       }
-      
-      const fileUrl = `https://${this.accountName}.blob.core.windows.net/${this.containerName}/${encodePathSegments(blobPath)}`;
-      
-      return this.createSuccessResult(blobPath, fileUrl);
-    } catch (error) {
-      await this.cleanupTempFile(file);
-      return this.createErrorResult(
-        error instanceof Error ? error.message : 'Failed to upload file to Azure'
-      );
-    }
+
+      return `https://${this.accountName}.blob.core.windows.net/${this.containerName}/${encodePathSegments(key)}`;
+    });
   }
 
-  /**
-   * Creates a SAS URL for uploading directly to Azure.
-   * 
-   * Important: Unlike S3 and GCS, Azure SAS URLs do NOT enforce file size
-   * or content type. Always call validateAndConfirmUpload() after the
-   * client uploads to verify the file is what you expected.
-   */
   async generateUploadUrl(fileName: string, contentType?: string, _fileSize?: number): Promise<PresignedUrlResult> {
     try {
       const decoded = this.decodeFileName(fileName);
@@ -246,9 +183,6 @@ export class AzureStorageDriver extends BaseStorageDriver {
     }
   }
 
-  /**
-   * Creates a SAS URL for downloading/viewing a file.
-   */
   async generateViewUrl(fileName: string): Promise<PresignedUrlResult> {
     try {
       const decoded = this.decodeFileName(fileName);
@@ -261,9 +195,6 @@ export class AzureStorageDriver extends BaseStorageDriver {
     }
   }
 
-  /**
-   * Generates a SAS URL for a blob with the specified permissions.
-   */
   private async generateSasUrl(blobName: string, permissions: string, contentType?: string): Promise<string> {
     if (!this.accountKey) {
       throw new Error('Account key is required for generating SAS URLs. Use connection string or provide AZURE_ACCOUNT_KEY.');
@@ -290,73 +221,47 @@ export class AzureStorageDriver extends BaseStorageDriver {
     return `${blockBlobClient.url}?${sasToken}`;
   }
 
-  /**
-   * Deletes a file from Azure Blob Storage.
-   */
   async delete(fileName: string): Promise<DeleteResult> {
     try {
       const decodedFileName = this.decodeFileName(fileName);
       const containerClient = await this.ensureContainerClient();
       const blockBlobClient = containerClient.getBlockBlobClient(decodedFileName);
-      
-      const exists = await blockBlobClient.exists();
-      if (!exists) {
-        return { success: false, reference: fileName, error: 'File not found', code: 'FILE_NOT_FOUND' };
-      }
-      
       await blockBlobClient.delete();
       return { success: true, reference: fileName };
     } catch (error) {
+      if (isNotFoundError(error)) {
+        return { success: false, reference: fileName, error: 'File not found', code: 'FILE_NOT_FOUND' };
+      }
       return { success: false, reference: fileName, error: error instanceof Error ? error.message : 'Failed to delete file', code: 'PROVIDER_ERROR' };
     }
   }
 
-  /**
-   * Validates an upload against expected values and deletes invalid files.
-   * Uses shared validation logic from BaseStorageDriver.
-   * 
-   * This is CRITICAL for Azure presigned uploads because Azure doesn't
-   * enforce constraints at the URL level.
-   */
+  
   override async validateAndConfirmUpload(
     reference: string, 
     options?: BlobValidationOptions
   ): Promise<BlobValidationResult> {
-    try {
-      const containerClient = await this.ensureContainerClient();
-      const blockBlobClient = containerClient.getBlockBlobClient(reference);
-      const properties = await blockBlobClient.getProperties();
-
-      const actual = {
-        contentType: properties.contentType,
-        fileSize: properties.contentLength,
-      };
-
-      const validationError = await this.checkUploadedFileMetadata(reference, actual, options);
-      if (validationError) return validationError;
-
-      const viewResult = await this.generateViewUrl(reference);
-      return this.buildValidationSuccess(reference, viewResult.success ? viewResult.viewUrl : undefined, actual.contentType, actual.fileSize);
-    } catch (error) {
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to validate upload',
-        code: 'PROVIDER_ERROR',
-      };
-    }
+    return this.confirmUploadFromMetadata(
+      reference,
+      options,
+      async () => {
+        const containerClient = await this.ensureContainerClient();
+        const blockBlobClient = containerClient.getBlockBlobClient(reference);
+        const properties = await blockBlobClient.getProperties();
+        return {
+          contentType: properties.contentType,
+          fileSize: properties.contentLength,
+        };
+      },
+      'Failed to validate upload'
+    );
   }
 
-  /**
-   * Returns metadata about a file from Azure without downloading it.
-   */
   async getMetadata(reference: string): Promise<FileInfo | null> {
     try {
       const decoded = this.decodeFileName(reference);
       const containerClient = await this.ensureContainerClient();
       const blockBlobClient = containerClient.getBlockBlobClient(decoded);
-      const exists = await blockBlobClient.exists();
-      if (!exists) return null;
-
       const properties = await blockBlobClient.getProperties();
       const info: FileInfo = { name: reference };
       if (properties.contentLength !== undefined) info.size = properties.contentLength;
@@ -368,9 +273,6 @@ export class AzureStorageDriver extends BaseStorageDriver {
     }
   }
 
-  /**
-   * Lists files in the container with optional prefix filtering and pagination.
-   */
   async listFiles(
     prefix?: string,
     maxResults: number = 1000,

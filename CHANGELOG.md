@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.0.0] - 2026-08-20
+
+### Breaking Changes
+
+- **The library no longer loads `.env` files.** Call `dotenv.config()` (or your framework env loader) in the application before constructing `StorageManager`. `dotenv` is no longer a runtime dependency.
+- **Removed `initializeDotenv` and `resetDotenvInitialization`** from `express-storage/config`.
+
+### Added
+
+- `StorageFile` type — upload APIs no longer require `Express.Multer.File`.
+- `joinStoragePath()` helper exported from `express-storage/utils`.
+- Local driver `getMetadata()` now returns sidecar custom metadata; sidecars are deleted with the file and omitted from `listFiles()`.
+
+### Changed
+
+- **Zero runtime dependencies** — the package no longer ships with any production dependencies.
+- `StorageOptions.driver` is optional (falls back to `FILE_DRIVER` or `local`).
+- `StorageManager` lazy-loads only the configured driver module instead of importing every provider at construct time.
+- Cloud drivers share `executeDirectUpload` / `confirmUploadFromMetadata`; GCS and Azure skip extra `exists()` probes on delete/getMetadata.
+- Azure `validateAndConfirmUpload` failures for missing blobs now use `FILE_NOT_FOUND` (was `PROVIDER_ERROR`).
+- GCS and local streaming uploads honor `AbortSignal` during the pipe, not only before start.
+- Magic-byte detection lives in one place (`detectMimeType`); the local driver reuses it.
+- Shared constants for driver names, expiry, max size, and stream threshold.
+- `HookErrorContext.operation` only lists upload/delete operations that actually invoke hooks. Rate limiting still applies only to presigned URL generation.
+- `StorageManager.destroy()` destroys that instance's driver only (it never used the factory cache).
+
 ## [3.0.0] - 2026-02-28
 
 ### Breaking Changes
@@ -45,7 +71,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **`getMetadata(reference)`** — returns file metadata (name, size, contentType, lastModified) without downloading the file. Works with all drivers.
-- **`destroy()`** — releases resources held by a StorageManager instance (clears factory cache entry and rate limiter).
+- **`destroy()`** — releases resources held by a StorageManager instance (destroys the driver and clears the rate limiter).
 - **`AbortSignal` support on batch methods.** `uploadFiles`, `deleteFiles`, `generateUploadUrls`, and `generateViewUrls` accept a `{ signal }` option to cancel long-running batches mid-flight.
 - **Lifecycle hooks.** `StorageOptions.hooks` lets you tap into upload/delete lifecycle events (`beforeUpload`, `afterUpload`, `beforeDelete`, `afterDelete`, `onError`) without modifying drivers. Before-hooks can throw to abort the operation.
 - **Pluggable rate limiter.** `RateLimiterAdapter` interface allows custom rate limiting implementations (Redis, Memcached, etc.). The built-in `InMemoryRateLimiter` is now exported separately.

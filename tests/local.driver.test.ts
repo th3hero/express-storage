@@ -31,10 +31,6 @@ function createDriver(overrides: Partial<StorageConfig> = {}): LocalStorageDrive
   });
 }
 
-// ============================================================================
-// SETUP & TEARDOWN
-// ============================================================================
-
 describe('LocalStorageDriver', () => {
   beforeEach(() => {
     // Clean up test directory
@@ -49,10 +45,6 @@ describe('LocalStorageDriver', () => {
       fs.rmSync(TEST_BASE_PATH, { recursive: true, force: true });
     }
   });
-
-  // ============================================================================
-  // POSITIVE TEST CASES - Upload
-  // ============================================================================
 
   describe('Upload - Positive', () => {
     it('should upload a file successfully', async () => {
@@ -198,10 +190,6 @@ describe('LocalStorageDriver', () => {
     });
   });
 
-  // ============================================================================
-  // NEGATIVE TEST CASES - Upload
-  // ============================================================================
-
   describe('Upload - Negative', () => {
     it('should fail for null file', async () => {
       const driver = createDriver();
@@ -266,10 +254,6 @@ describe('LocalStorageDriver', () => {
     });
   });
 
-  // ============================================================================
-  // SECURITY TESTS - Path Traversal
-  // ============================================================================
-
   describe('Security - Path Traversal Prevention', () => {
     it('should reject path traversal in delete', async () => {
       const driver = createDriver();
@@ -316,10 +300,6 @@ describe('LocalStorageDriver', () => {
       fs.unlinkSync(outsidePath);
     });
   });
-
-  // ============================================================================
-  // SECURITY TESTS - Symlink Protection
-  // ============================================================================
 
   describe('Security - Symlink Protection', () => {
     it('should not delete symlinks', async () => {
@@ -375,10 +355,6 @@ describe('LocalStorageDriver', () => {
       expect(result.success).toBe(false);
     });
   });
-
-  // ============================================================================
-  // CONTENT TYPE DETECTION TESTS
-  // ============================================================================
 
   describe('Content Type Detection', () => {
     it('should detect JPEG from magic bytes', async () => {
@@ -453,10 +429,6 @@ describe('LocalStorageDriver', () => {
       expect(validation.actualContentType).toBe('application/json');
     });
   });
-
-  // ============================================================================
-  // VALIDATION TESTS
-  // ============================================================================
 
   describe('Validate and Confirm Upload', () => {
     it('should validate file existence', async () => {
@@ -572,10 +544,6 @@ describe('LocalStorageDriver', () => {
     });
   });
 
-  // ============================================================================
-  // DELETION TESTS
-  // ============================================================================
-
   describe('Deletion', () => {
     it('should delete uploaded file', async () => {
       const driver = createDriver();
@@ -623,10 +591,6 @@ describe('LocalStorageDriver', () => {
     });
   });
 
-  // ============================================================================
-  // FILE METADATA TESTS
-  // ============================================================================
-
   describe('File Metadata', () => {
     it('should return metadata for uploaded file', async () => {
       const driver = createDriver();
@@ -667,11 +631,40 @@ describe('LocalStorageDriver', () => {
         expect(metadata).toBeNull();
       }
     });
-  });
 
-  // ============================================================================
-  // LISTING TESTS
-  // ============================================================================
+    it('should round-trip custom metadata via sidecar and delete it with the file', async () => {
+      const driver = createDriver();
+      const file = createMockFile({ originalname: 'notes.txt' });
+      const uploadResult = await driver.upload(file, {
+        metadata: { owner: 'alok', purpose: 'review' },
+        contentType: 'text/plain',
+      });
+      expect(uploadResult.success).toBe(true);
+
+      const listed = await driver.listFiles();
+      expect(listed.success).toBe(true);
+      expect(listed.files?.some(f => f.name.endsWith('.meta.json'))).toBe(false);
+
+      const metadata = await driver.getMetadata(uploadResult.reference!);
+      expect(metadata?.metadata).toEqual({ owner: 'alok', purpose: 'review' });
+
+      const deleted = await driver.delete(uploadResult.reference!);
+      expect(deleted.success).toBe(true);
+
+      const leftover = fs.readdirSync(TEST_BASE_PATH, { recursive: true }) as string[];
+      expect(leftover.some(name => String(name).endsWith('.meta.json'))).toBe(false);
+    });
+
+    it('should reject an already-aborted upload signal', async () => {
+      const driver = createDriver();
+      const controller = new AbortController();
+      controller.abort();
+      const result = await driver.upload(createMockFile({ originalname: 'aborted.txt' }), {
+        signal: controller.signal,
+      });
+      expect(result.success).toBe(false);
+    });
+  });
 
   describe('File Listing', () => {
     it('should list uploaded files', async () => {
@@ -777,10 +770,6 @@ describe('LocalStorageDriver', () => {
     });
   });
 
-  // ============================================================================
-  // PRESIGNED URL TESTS (Local driver doesn't support these)
-  // ============================================================================
-
   describe('Presigned URLs', () => {
     it('should return error for generateUploadUrl', async () => {
       const driver = createDriver();
@@ -800,10 +789,6 @@ describe('LocalStorageDriver', () => {
       expect(result.error).toContain('not supported');
     });
   });
-
-  // ============================================================================
-  // EDGE CASES
-  // ============================================================================
 
   describe('Edge Cases', () => {
     it('should handle files with special characters in name', async () => {
@@ -870,10 +855,6 @@ describe('LocalStorageDriver', () => {
       expect(result.success).toBe(true);
     });
   });
-
-  // ============================================================================
-  // PRESIGNED URL EXPIRY TESTS
-  // ============================================================================
 
   describe('Presigned URL Expiry', () => {
     it('should use default expiry', () => {

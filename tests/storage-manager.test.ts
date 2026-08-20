@@ -9,7 +9,6 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import fs from 'fs';
 import path from 'path';
 import { StorageManager } from '../src/storage-manager.js';
-import { resetDotenvInitialization } from '../src/utils/config.utils.js';
 import {
   createMockFile,
   createMockJpegFile,
@@ -21,14 +20,8 @@ import {
 
 const TEST_UPLOAD_DIR = path.join(process.cwd(), 'test-storage-manager-uploads');
 
-// ============================================================================
-// SETUP & TEARDOWN
-// ============================================================================
-
 describe('StorageManager', () => {
   beforeEach(() => {
-    resetDotenvInitialization();
-    
     if (fs.existsSync(TEST_UPLOAD_DIR)) {
       fs.rmSync(TEST_UPLOAD_DIR, { recursive: true, force: true });
     }
@@ -40,14 +33,18 @@ describe('StorageManager', () => {
     }
   });
 
-  // ============================================================================
-  // POSITIVE TEST CASES - Initialization
-  // ============================================================================
-
   describe('Initialization - Positive', () => {
     it('should initialize with local driver by default', () => {
       const storage = new StorageManager({
         driver: 'local',
+        credentials: { localPath: TEST_UPLOAD_DIR },
+      });
+
+      expect(storage.getDriverType()).toBe('local');
+    });
+
+    it('should default to local when driver is omitted', () => {
+      const storage = new StorageManager({
         credentials: { localPath: TEST_UPLOAD_DIR },
       });
 
@@ -122,10 +119,6 @@ describe('StorageManager', () => {
       expect(local.isPresignedUploadMode()).toBe(false);
     });
   });
-
-  // ============================================================================
-  // POSITIVE TEST CASES - File Upload
-  // ============================================================================
 
   describe('File Upload - Positive', () => {
     let storage: StorageManager;
@@ -261,10 +254,6 @@ describe('StorageManager', () => {
       expect(result.success).toBe(true);
     });
   });
-
-  // ============================================================================
-  // NEGATIVE TEST CASES - File Upload
-  // ============================================================================
 
   describe('File Upload - Negative', () => {
     let storage: StorageManager;
@@ -414,10 +403,6 @@ describe('StorageManager', () => {
     });
   });
 
-  // ============================================================================
-  // POSITIVE TEST CASES - Presigned URLs
-  // ============================================================================
-
   describe('Presigned URLs - Positive', () => {
     let storage: StorageManager;
 
@@ -485,10 +470,6 @@ describe('StorageManager', () => {
       expect(storage.requiresPostUploadValidation()).toBe(false);
     });
   });
-
-  // ============================================================================
-  // NEGATIVE TEST CASES - Presigned URLs
-  // ============================================================================
 
   describe('Presigned URLs - Negative', () => {
     let storage: StorageManager;
@@ -637,10 +618,6 @@ describe('StorageManager', () => {
     });
   });
 
-  // ============================================================================
-  // RATE LIMITING TESTS
-  // ============================================================================
-
   describe('Rate Limiting', () => {
     it('should enforce rate limit on presigned URL generation', async () => {
       const storage = new StorageManager({
@@ -708,10 +685,6 @@ describe('StorageManager', () => {
       expect(result.error).toContain('Rate limit');
     });
   });
-
-  // ============================================================================
-  // FILE DELETION TESTS
-  // ============================================================================
 
   describe('File Deletion - Positive', () => {
     let storage: StorageManager;
@@ -787,10 +760,6 @@ describe('StorageManager', () => {
       expect(results.every(r => !r.success)).toBe(true);
     });
   });
-
-  // ============================================================================
-  // FILE LISTING TESTS
-  // ============================================================================
 
   describe('File Listing - Positive', () => {
     let storage: StorageManager;
@@ -873,10 +842,6 @@ describe('StorageManager', () => {
     });
   });
 
-  // ============================================================================
-  // VALIDATION AND CONFIRMATION TESTS
-  // ============================================================================
-
   describe('Validate and Confirm Upload', () => {
     let storage: StorageManager;
 
@@ -911,10 +876,6 @@ describe('StorageManager', () => {
       expect(validation.error).toContain('traversal');
     });
   });
-
-  // ============================================================================
-  // FILE METADATA TESTS
-  // ============================================================================
 
   describe('File Metadata', () => {
     let storage: StorageManager;
@@ -964,10 +925,6 @@ describe('StorageManager', () => {
       expect(metadata).toBeNull();
     });
   });
-
-  // ============================================================================
-  // LIFECYCLE TESTS - destroy()
-  // ============================================================================
 
   describe('Lifecycle - destroy', () => {
     it('should clear rate limiter on destroy', async () => {
@@ -1028,10 +985,6 @@ describe('StorageManager', () => {
       expect(storage2.getDriverType()).toBe('local');
     });
   });
-
-  // ============================================================================
-  // ERROR HANDLING TESTS
-  // ============================================================================
 
   describe('Error Handling', () => {
     it('should throw on invalid configuration', () => {

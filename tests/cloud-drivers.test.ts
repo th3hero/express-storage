@@ -12,10 +12,6 @@ import { GCSStorageDriver } from '../src/drivers/gcs.driver.js';
 import { AzureStorageDriver } from '../src/drivers/azure.driver.js';
 import type { StorageConfig } from '../src/types/storage.types.js';
 
-// ============================================================================
-// MOCK FACTORIES
-// ============================================================================
-
 function createS3Config(overrides: Partial<StorageConfig> = {}): StorageConfig {
   return {
     driver: 's3',
@@ -44,10 +40,6 @@ function createAzureConfig(overrides: Partial<StorageConfig> = {}): StorageConfi
     ...overrides,
   };
 }
-
-// ============================================================================
-// S3 DRIVER TESTS
-// ============================================================================
 
 describe('S3StorageDriver', () => {
   describe('Constructor Validation', () => {
@@ -171,10 +163,6 @@ describe('S3StorageDriver', () => {
   });
 });
 
-// ============================================================================
-// GCS DRIVER TESTS
-// ============================================================================
-
 describe('GCSStorageDriver', () => {
   describe('Constructor Validation', () => {
     it('should throw when bucketName is missing', () => {
@@ -246,10 +234,6 @@ describe('GCSStorageDriver', () => {
     });
   });
 });
-
-// ============================================================================
-// AZURE DRIVER TESTS
-// ============================================================================
 
 describe('AzureStorageDriver', () => {
   describe('Constructor Validation', () => {
@@ -368,10 +352,6 @@ describe('AzureStorageDriver', () => {
     });
   });
 });
-
-// ============================================================================
-// CROSS-DRIVER TESTS
-// ============================================================================
 
 describe('Cross-Driver Consistency', () => {
   const drivers = [

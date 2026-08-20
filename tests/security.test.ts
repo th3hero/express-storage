@@ -29,10 +29,6 @@ import {
 const TEST_DIR = path.join(process.cwd(), 'test-security');
 const SENSITIVE_DIR = path.join(process.cwd(), 'test-sensitive');
 
-// ============================================================================
-// SETUP & TEARDOWN
-// ============================================================================
-
 describe('Security Tests', () => {
   beforeEach(() => {
     [TEST_DIR, SENSITIVE_DIR].forEach(dir => {
@@ -56,10 +52,6 @@ describe('Security Tests', () => {
       }
     });
   });
-
-  // ============================================================================
-  // PATH TRAVERSAL ATTACK TESTS
-  // ============================================================================
 
   describe('Path Traversal Prevention', () => {
     let storage: StorageManager;
@@ -172,10 +164,6 @@ describe('Security Tests', () => {
     });
   });
 
-  // ============================================================================
-  // NULL BYTE INJECTION TESTS
-  // ============================================================================
-
   describe('Null Byte Injection Prevention', () => {
     let storage: StorageManager;
 
@@ -227,10 +215,6 @@ describe('Security Tests', () => {
       expect(result.success).toBe(false);
     });
   });
-
-  // ============================================================================
-  // SYMLINK ATTACK TESTS
-  // ============================================================================
 
   describe('Symlink Attack Prevention', () => {
     let driver: LocalStorageDriver;
@@ -300,10 +284,6 @@ describe('Security Tests', () => {
     });
   });
 
-  // ============================================================================
-  // FILE TYPE SPOOFING TESTS
-  // ============================================================================
-
   describe('File Type Spoofing Detection', () => {
     let driver: LocalStorageDriver;
 
@@ -354,10 +334,6 @@ describe('Security Tests', () => {
       expect(validation.error).toContain('Content type mismatch');
     });
   });
-
-  // ============================================================================
-  // INPUT VALIDATION TESTS
-  // ============================================================================
 
   describe('Input Validation', () => {
     describe('Filename length limits', () => {
@@ -489,10 +465,6 @@ describe('Security Tests', () => {
     });
   });
 
-  // ============================================================================
-  // RATE LIMITING SECURITY TESTS
-  // ============================================================================
-
   describe('Rate Limiting Security', () => {
     it('should prevent URL generation abuse', async () => {
       const storage = new StorageManager({
@@ -558,10 +530,6 @@ describe('Security Tests', () => {
     });
   });
 
-  // ============================================================================
-  // FILENAME GENERATION SECURITY
-  // ============================================================================
-
   describe('Secure Filename Generation', () => {
     it('should generate unpredictable filenames', () => {
       const names = new Set<string>();
@@ -615,10 +583,6 @@ describe('Security Tests', () => {
       }
     });
   });
-
-  // ============================================================================
-  // FOLDER PATH VALIDATION
-  // ============================================================================
 
   describe('Folder Path Security', () => {
     let storage: StorageManager;
