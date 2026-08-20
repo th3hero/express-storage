@@ -92,11 +92,11 @@
     "s3-upload"
   ],
   "scripts": {
-    "build": "npm run build:esm && npm run build:cjs && npm run build:fixup",
+    "build": "node api.js && npm run build:esm && npm run build:cjs && npm run build:fixup",
     "build:esm": "tsc -p tsconfig.esm.json",
     "build:cjs": "tsc -p tsconfig.cjs.json",
     "build:fixup": "echo '{\"type\":\"commonjs\"}' > dist/cjs/package.json && echo '{\"type\":\"module\"}' > dist/esm/package.json",
-    "dev": "tsc -p tsconfig.esm.json --watch",
+    "dev": "node api.js && tsc -p tsconfig.esm.json --watch",
     "clean": "rm -rf dist",
     "prepublishOnly": "npm run clean && npm run build",
     "lint": "eslint src",
