@@ -1,6 +1,6 @@
 {
   "name": "express-storage",
-  "version": "4.0.0",
+  "version": "3.0.6",
   "description": "Express.js file upload library for AWS S3, Google Cloud Storage, Azure Blob & local disk. Unified API with presigned URLs, file validation, streaming uploads, TypeScript support, and zero-config provider switching.",
   "homepage": "https://github.com/th3hero/express-storage#readme",
   "bugs": {
