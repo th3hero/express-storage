@@ -22,18 +22,18 @@ jobs:
               with:
                   ref: main
 
-            # Do not set registry-url: setup-node injects a dummy NODE_AUTH_TOKEN
-            # that blocks OIDC Trusted Publishing and causes E403 under
-            # "disallow bypass 2FA tokens" package policy.
             - name: Setup NodeJS
               uses: actions/setup-node@v6
               with:
                   node-version: "24"
-                  package-manager-cache: false
+
+            - name: Upgrade npm for Trusted Publishing
+              run: npm install -g npm@latest
 
             - name: Get version from release tag
               id: version
               run: |
+                  # Extract version from tag (removes 'v' or 'V' prefix if present)
                   VERSION=$(echo "${GITHUB_REF_NAME}" | sed 's/^[vV]//')
                   echo "version=$VERSION" >> $GITHUB_OUTPUT
                   echo "Publishing version: $VERSION"
@@ -47,15 +47,8 @@ jobs:
             - name: Build
               run: npm run build
 
-            - name: Stage publish to NPM (Trusted Publishing)
-              run: |
-                  if [ -n "${NODE_AUTH_TOKEN:-}" ]; then
-                    echo "NODE_AUTH_TOKEN must be unset for Trusted Publishing"
-                    exit 1
-                  fi
-                  test -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}"
-                  test -n "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}"
-                  npm stage publish --access public --registry=https://registry.npmjs.org
+            - name: Publish to NPM (Trusted Publishing)
+              run: npm publish --access public
 
     update-repo:
         name: Update Repository
