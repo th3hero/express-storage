@@ -47,8 +47,14 @@ jobs:
             - name: Build
               run: npm run build
 
+            - name: Debug npm auth config
+              run: npm config list
+
+            - name: Strip any stale npm auth token (force OIDC)
+              run: npm config delete //registry.npmjs.org/:_authToken 2>/dev/null || true
+
             - name: Publish to NPM (Trusted Publishing)
-              run: npm publish --access public
+              run: npm publish --access public --loglevel verbose
 
     update-repo:
         name: Update Repository
