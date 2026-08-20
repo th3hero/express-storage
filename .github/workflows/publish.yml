@@ -47,7 +47,7 @@ jobs:
             - name: Build
               run: npm run build
 
-            - name: Publish to NPM (Trusted Publishing)
+            - name: Stage publish to NPM (Trusted Publishing)
               run: |
                   if [ -n "${NODE_AUTH_TOKEN:-}" ]; then
                     echo "NODE_AUTH_TOKEN must be unset for Trusted Publishing"
@@ -55,7 +55,7 @@ jobs:
                   fi
                   test -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}"
                   test -n "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}"
-                  npm publish --access public --registry=https://registry.npmjs.org
+                  npm stage publish --access public --registry=https://registry.npmjs.org
 
     update-repo:
         name: Update Repository
