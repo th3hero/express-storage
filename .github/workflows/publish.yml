@@ -47,6 +47,8 @@ jobs:
 
             - name: Publish to NPM (Trusted Publishing)
               run: npm publish --access public
+              env:
+                  NODE_AUTH_TOKEN: ""
 
     update-repo:
         name: Update Repository
