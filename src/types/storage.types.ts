@@ -1,9 +1,3 @@
-/**
- * The storage drivers you can use.
- *
- * Direct drivers upload through your server.
- * Presigned drivers give you URLs for client-side uploads.
- */
 export type StorageDriver =
     | "s3"
     | "s3-presigned"
@@ -13,24 +7,6 @@ export type StorageDriver =
     | "azure-presigned"
     | "local";
 
-// ---------------------------------------------------------------------------
-// Error codes
-// ---------------------------------------------------------------------------
-
-/**
- * Programmatic error codes for every failure case.
- *
- * Use these to branch on specific error conditions without parsing strings:
- * ```typescript
- * if (!result.success) {
- *   switch (result.code) {
- *     case 'FILE_TOO_LARGE': showSizeError(); break;
- *     case 'INVALID_MIME_TYPE': showTypeError(); break;
- *     case 'RATE_LIMITED': retryLater(); break;
- *   }
- * }
- * ```
- */
 export type StorageErrorCode =
     | "NO_FILE"
     | "FILE_EMPTY"
@@ -47,24 +23,6 @@ export type StorageErrorCode =
     | "PRESIGNED_NOT_SUPPORTED"
     | "PROVIDER_ERROR";
 
-// ---------------------------------------------------------------------------
-// Result types — discriminated unions for type-safe narrowing
-// ---------------------------------------------------------------------------
-
-/**
- * What you get back after uploading a file.
- *
- * Use `result.success` to narrow the type:
- * ```typescript
- * const result = await storage.uploadFile(file);
- * if (result.success) {
- *   console.log(result.reference); // TypeScript knows this exists
- * } else {
- *   console.log(result.error);    // TypeScript knows this exists
- *   console.log(result.code);     // e.g., 'FILE_TOO_LARGE'
- * }
- * ```
- */
 export type FileUploadResult = FileUploadSuccess | FileUploadError;
 
 export interface FileUploadSuccess {
@@ -83,9 +41,6 @@ export interface FileUploadError {
     code: StorageErrorCode;
 }
 
-/**
- * What you get back after deleting a file.
- */
 export type DeleteResult = DeleteSuccess | DeleteError;
 
 export interface DeleteSuccess {
@@ -104,14 +59,6 @@ export interface DeleteError {
     code: StorageErrorCode;
 }
 
-/**
- * What you get back when generating presigned URLs.
- */
-/**
- * Driver-level presigned URL result. Drivers only set uploadUrl or viewUrl.
- * StorageManager enriches this into PresignedUploadUrlResult / PresignedViewUrlResult
- * with guaranteed fields like fileName, reference, and expiresIn.
- */
 export type PresignedUrlResult = PresignedUrlSuccess | PresignedUrlError;
 
 export interface PresignedUrlSuccess {
@@ -130,10 +77,6 @@ export interface PresignedUrlError {
     code: StorageErrorCode;
 }
 
-/**
- * Stricter result from StorageManager.generateUploadUrl().
- * On success, fileName, reference, uploadUrl, and expiresIn are guaranteed.
- */
 export type PresignedUploadUrlResult =
     | PresignedUploadUrlSuccess
     | PresignedUrlError;
@@ -153,10 +96,6 @@ export interface PresignedUploadUrlSuccess extends PresignedUrlSuccess {
     requiresValidation?: boolean;
 }
 
-/**
- * Stricter result from StorageManager.generateViewUrl().
- * On success, reference, viewUrl, and expiresIn are guaranteed.
- */
 export type PresignedViewUrlResult =
     | PresignedViewUrlSuccess
     | PresignedUrlError;
@@ -167,9 +106,6 @@ export interface PresignedViewUrlSuccess extends PresignedUrlSuccess {
     expiresIn: number;
 }
 
-/**
- * What you get back after validating an upload.
- */
 export type BlobValidationResult = BlobValidationSuccess | BlobValidationError;
 
 export interface BlobValidationSuccess {
@@ -198,9 +134,6 @@ export interface BlobValidationError {
     actualFileSize?: number;
 }
 
-/**
- * What you get back when listing files.
- */
 export type ListFilesResult = ListFilesSuccess | ListFilesError;
 
 export interface ListFilesSuccess {
@@ -219,13 +152,6 @@ export interface ListFilesError {
     code: StorageErrorCode;
 }
 
-// ---------------------------------------------------------------------------
-// Validation & upload options
-// ---------------------------------------------------------------------------
-
-/**
- * Options for validating uploads (especially important for Azure).
- */
 export interface BlobValidationOptions {
     /** The content type you're expecting */
     expectedContentType?: string;
@@ -235,9 +161,6 @@ export interface BlobValidationOptions {
     deleteOnFailure?: boolean;
 }
 
-/**
- * Options for validating files before upload.
- */
 export interface FileValidationOptions {
     /** Maximum file size in bytes */
     maxSize?: number;
@@ -247,9 +170,6 @@ export interface FileValidationOptions {
     allowedExtensions?: string[];
 }
 
-/**
- * Options for customizing how files are uploaded.
- */
 export interface UploadOptions {
     /** Override the detected content type */
     contentType?: string;
@@ -263,9 +183,6 @@ export interface UploadOptions {
     signal?: AbortSignal | undefined;
 }
 
-/**
- * File metadata for generating multiple presigned URLs at once.
- */
 export interface FileMetadata {
     /** The filename */
     fileName: string;
@@ -275,59 +192,22 @@ export interface FileMetadata {
     fileSize?: number;
 }
 
-// ---------------------------------------------------------------------------
-// Lifecycle hooks
-// ---------------------------------------------------------------------------
-
-/**
- * Context passed to the onError hook.
- */
 export interface HookErrorContext {
-    operation:
-        | "upload"
-        | "uploadMultiple"
-        | "delete"
-        | "deleteMultiple"
-        | "generateUploadUrl"
-        | "generateViewUrl"
-        | "validateUpload"
-        | "listFiles";
-    file?: Express.Multer.File;
+    operation: "upload" | "uploadMultiple" | "delete" | "deleteMultiple";
+    file?: StorageFile;
     reference?: string;
 }
 
-/**
- * Hooks let you tap into the upload/delete lifecycle without modifying drivers.
- *
- * All hooks are optional and async-safe. If a "before" hook throws, the
- * operation is aborted and an error result is returned.
- *
- * @example
- * const storage = new StorageManager({
- *   driver: 's3',
- *   hooks: {
- *     beforeUpload: async (file) => {
- *       await virusScan(file.buffer);
- *     },
- *     afterUpload: (result) => {
- *       auditLog('file_uploaded', result);
- *     },
- *     onError: (error, ctx) => {
- *       metrics.increment('storage.error', { operation: ctx.operation });
- *     },
- *   },
- * });
- */
 export interface StorageHooks {
     /** Called before each file upload. Throw to abort. */
     beforeUpload?: (
-        file: Express.Multer.File,
+        file: StorageFile,
         options?: UploadOptions,
     ) => void | Promise<void>;
     /** Called after each file upload (success or failure). */
     afterUpload?: (
         result: FileUploadResult,
-        file: Express.Multer.File,
+        file: StorageFile,
     ) => void | Promise<void>;
     /** Called before each file deletion. Throw to abort. */
     beforeDelete?: (reference: string) => void | Promise<void>;
@@ -337,29 +217,6 @@ export interface StorageHooks {
     onError?: (error: Error, context: HookErrorContext) => void | Promise<void>;
 }
 
-// ---------------------------------------------------------------------------
-// Rate limiting
-// ---------------------------------------------------------------------------
-
-/**
- * Adapter interface for rate limiting presigned URL generation.
- *
- * The built-in InMemoryRateLimiter works for single-process apps.
- * For multi-process/clustered deployments, implement this interface
- * backed by Redis, Memcached, or another shared store.
- *
- * @example
- * // Custom Redis-backed rate limiter
- * class RedisRateLimiter implements RateLimiterAdapter {
- *   async tryAcquire() { ... }
- *   async getRemainingRequests() { ... }
- *   async getResetTime() { ... }
- * }
- * const storage = new StorageManager({
- *   driver: 's3',
- *   rateLimiter: new RedisRateLimiter(redis),
- * });
- */
 export interface RateLimiterAdapter {
     /** Check if a request is allowed and record it if so. */
     tryAcquire(): boolean | Promise<boolean>;
@@ -369,9 +226,6 @@ export interface RateLimiterAdapter {
     getResetTime(): number | Promise<number>;
 }
 
-/**
- * Shorthand options for creating the built-in InMemoryRateLimiter.
- */
 export interface RateLimitOptions {
     /** Maximum number of presigned URLs that can be generated per window */
     maxRequests: number;
@@ -379,13 +233,6 @@ export interface RateLimitOptions {
     windowMs?: number;
 }
 
-// ---------------------------------------------------------------------------
-// Configuration
-// ---------------------------------------------------------------------------
-
-/**
- * Logging interface — pass your own logger if you want debug output.
- */
 export interface Logger {
     debug: (message: string, ...args: unknown[]) => void;
     info: (message: string, ...args: unknown[]) => void;
@@ -393,11 +240,6 @@ export interface Logger {
     error: (message: string, ...args: unknown[]) => void;
 }
 
-/**
- * Credentials and settings for storage configuration.
- *
- * These can be passed programmatically to override environment variables.
- */
 export interface StorageCredentials {
     /** Bucket or container name (S3/GCS bucket, Azure container) */
     bucketName?: string;
@@ -427,21 +269,13 @@ export interface StorageCredentials {
     azureContainerName?: string;
 }
 
-/**
- * Options for initializing StorageManager.
- */
 export interface StorageOptions {
-    /** Which storage driver to use */
-    driver: StorageDriver;
+    /** Which storage driver to use. Defaults to FILE_DRIVER or `local`. */
+    driver?: StorageDriver;
     /** Credentials and settings (optional — can come from env vars) */
     credentials?: StorageCredentials;
     /** Your logger (optional — silent by default) */
     logger?: Logger;
-    /**
-     * Rate limiting for presigned URL generation.
-     * Pass RateLimitOptions for the built-in in-memory limiter,
-     * or a RateLimiterAdapter for a custom implementation (e.g., Redis).
-     */
     rateLimiter?: RateLimitOptions | RateLimiterAdapter;
     /** Lifecycle hooks (optional) */
     hooks?: StorageHooks;
@@ -449,18 +283,11 @@ export interface StorageOptions {
     concurrency?: number;
 }
 
-/**
- * Options for batch operations (uploadFiles, deleteFiles, etc.).
- */
 export interface BatchOptions {
     /** AbortSignal to cancel the batch operation mid-flight. */
     signal?: AbortSignal | undefined;
 }
 
-/**
- * Public configuration — safe to expose via getConfig().
- * Contains non-sensitive settings only.
- */
 export interface PublicStorageConfig {
     driver: StorageDriver;
     bucketName?: string | undefined;
@@ -474,10 +301,6 @@ export interface PublicStorageConfig {
     azureContainerName?: string | undefined;
 }
 
-/**
- * Internal configuration format (used by drivers). Extends the public config
- * with sensitive credential fields that should never be exposed to consumers.
- */
 export interface StorageConfig extends PublicStorageConfig {
     awsAccessKey?: string | undefined;
     awsSecretKey?: string | undefined;
@@ -486,9 +309,6 @@ export interface StorageConfig extends PublicStorageConfig {
     azureAccountKey?: string | undefined;
 }
 
-/**
- * Information about a single file.
- */
 export interface FileInfo {
     /** File path/name */
     name: string;
@@ -498,14 +318,21 @@ export interface FileInfo {
     contentType?: string;
     /** When the file was last modified */
     lastModified?: Date;
+    /** Custom key-value metadata stored with the file (local sidecar / cloud object metadata) */
+    metadata?: Record<string, string>;
 }
 
-/**
- * The interface all storage drivers implement.
- */
+export interface StorageFile {
+    originalname: string;
+    mimetype: string;
+    size: number;
+    buffer?: Buffer;
+    path?: string;
+}
+
 export interface IStorageDriver {
     upload(
-        file: Express.Multer.File,
+        file: StorageFile,
         options?: UploadOptions,
     ): Promise<FileUploadResult>;
     generateUploadUrl(
@@ -529,17 +356,11 @@ export interface IStorageDriver {
     destroy(): void;
 }
 
-/**
- * Result of configuration validation.
- */
 export interface ValidationResult {
     isValid: boolean;
     errors: string[];
 }
 
-/**
- * Environment variables we look for.
- */
 export interface EnvironmentConfig {
     FILE_DRIVER: string;
     BUCKET_NAME?: string | undefined;

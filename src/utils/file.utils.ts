@@ -1,17 +1,8 @@
 import path from 'path';
 import fsPromises from 'fs/promises';
 import crypto from 'crypto';
-import type { StorageErrorCode } from '../types/storage.types.js';
+import type { StorageErrorCode, StorageFile } from '../types/storage.types.js';
 
-/**
- * Creates a unique filename that won't collide with existing files.
- * 
- * Format: {timestamp}_{random}_{sanitized_name}.{extension}
- * Example: 1769104576000_a1b2c3d4e5_my_image.jpeg
- * 
- * The random part uses crypto.randomBytes() for extra collision resistance
- * in high-throughput scenarios.
- */
 export function generateUniqueFileName(originalName: string): string {
   const timestamp = Date.now();
   const randomSuffix = crypto.randomBytes(5).toString('hex');
@@ -19,7 +10,6 @@ export function generateUniqueFileName(originalName: string): string {
   // Handle dotfiles like .gitignore or .env (they have no extension)
   let extension: string;
   let baseName: string;
-  
   if (originalName.startsWith('.') && !originalName.slice(1).includes('.')) {
     extension = '';
     baseName = sanitizeFileName(originalName);
@@ -28,74 +18,41 @@ export function generateUniqueFileName(originalName: string): string {
     const sanitizedName = sanitizeFileName(originalName);
     baseName = path.basename(sanitizedName, path.extname(sanitizedName));
   }
-  
   if (!baseName || baseName.trim() === '') {
     baseName = 'file';
   }
-  
   return `${timestamp}_${randomSuffix}_${baseName}${extension}`;
 }
 
-/**
- * Makes a filename safe for storage by removing problematic characters.
- * 
- * Replaces anything that isn't alphanumeric, a dot, or a hyphen with underscores.
- * This ensures compatibility with all filesystems and cloud storage providers.
- * 
- * Note: Unicode characters like Chinese or emojis become underscores.
- * If you need to preserve these, consider using your own sanitization function.
- */
 export function sanitizeFileName(fileName: string): string {
   const sanitized = fileName
     .normalize('NFC')
     .replace(/[^a-zA-Z0-9.-]/g, '_')
     .replace(/_{2,}/g, '_')
     .replace(/^_+|_+$/g, '');
-  
   return sanitized || 'file';
 }
 
-/**
- * Checks if a filename is safe to use.
- * 
- * Rejects:
- * - Empty filenames
- * - Filenames over 255 characters
- * - Path traversal attempts (../, /, \)
- * - Null bytes
- * 
- * Returns an error message if invalid, null if OK.
- */
 export function validateFileName(fileName: string): string | null {
   if (!fileName || typeof fileName !== 'string') {
     return 'Filename is required';
   }
-  
   const trimmed = fileName.trim();
   if (trimmed.length === 0) {
     return 'Filename cannot be empty';
   }
-  
   if (trimmed.length > 255) {
     return 'Filename is too long (max 255 characters)';
   }
-  
   if (trimmed.includes('..') || trimmed.includes('/') || trimmed.includes('\\')) {
     return 'Filename cannot contain path separators or traversal sequences';
   }
-  
   if (trimmed.includes('\0')) {
     return 'Filename cannot contain null bytes';
   }
-  
   return null;
 }
 
-/**
- * Returns true if the value contains path traversal sequences (`..`) or null bytes.
- * Checks both the raw value and its URL-decoded form to catch encoded attacks
- * like `%2e%2e/etc/passwd`.
- */
 export function hasPathTraversal(value: string): boolean {
   if (value.includes('..') || value.includes('\0')) {
     return true;
@@ -108,47 +65,28 @@ export function hasPathTraversal(value: string): boolean {
   }
 }
 
-/**
- * URL-encodes each segment of a `/`-separated path individually.
- * Preserves the `/` separators while encoding special characters within segments.
- */
 export function encodePathSegments(filePath: string): string {
   return filePath.split('/').map(segment => encodeURIComponent(segment)).join('/');
 }
 
-/**
- * Creates a date-based folder path: YYYY/MM
- * 
- * Uses UTC to keep things consistent across timezones.
- * Example: For January 2026 -> 'uploads/2026/01'
- */
+export function joinStoragePath(fileName: string, folder?: string): string {
+  const normalized = folder?.trim().replace(/^\/+|\/+$/g, '') ?? '';
+  return normalized ? `${normalized}/${fileName}` : fileName;
+}
+
 export function createMonthBasedPath(basePath: string): string {
   const now = new Date();
   const year = now.getUTCFullYear();
   const month = String(now.getUTCMonth() + 1).padStart(2, '0');
-  
   return path.join(basePath, year.toString(), month);
 }
 
-/**
- * Creates a directory if it doesn't exist.
- * Also creates any parent directories needed (recursive).
- */
 export async function ensureDirectoryExists(dirPath: string): Promise<void> {
   await fsPromises.mkdir(dirPath, { recursive: true });
 }
 
-/**
- * Converts bytes to a human-readable string.
- * 
- * Examples:
- * - 1024 -> "1 KB"
- * - 1048576 -> "1 MB"
- * - 0 -> "0 Bytes"
- */
 export function formatFileSize(bytes: number): string {
   const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
-  
   if (typeof bytes !== 'number' || Number.isNaN(bytes)) {
     return 'Invalid size';
   }
@@ -168,32 +106,17 @@ export function formatFileSize(bytes: number): string {
     size /= 1024;
     i++;
   }
-  
   return Math.round(size * 100) / 100 + ' ' + sizes[i];
 }
 
-/**
- * Checks if a file size is within the allowed limit.
- */
 export function validateFileSize(fileSize: number, maxSize: number): boolean {
   return fileSize <= maxSize;
 }
 
-/**
- * Checks if a MIME type is in the allowed list.
- */
 export function validateFileType(mimeType: string, allowedTypes: string[]): boolean {
   return allowedTypes.includes(mimeType);
 }
 
-/**
- * Extracts the file extension (lowercase, includes the dot).
- * 
- * Examples:
- * - 'photo.jpg' -> '.jpg'
- * - '.gitignore' -> '' (dotfiles have no extension)
- * - 'archive.tar.gz' -> '.gz' (only the last extension)
- */
 export function getFileExtension(fileName: string): string {
   if (!fileName) return '';
   
@@ -201,20 +124,13 @@ export function getFileExtension(fileName: string): string {
   if (fileName.startsWith('.') && !fileName.slice(1).includes('.')) {
     return '';
   }
-  
   return path.extname(fileName).toLowerCase();
 }
 
-/**
- * Checks if a MIME type indicates an image.
- */
 export function isImageFile(mimeType: string): boolean {
   return mimeType.startsWith('image/');
 }
 
-/**
- * Checks if a MIME type indicates a document (PDF, Word, Excel, etc.).
- */
 export function isDocumentFile(mimeType: string): boolean {
   const documentTypes = [
     'application/pdf',
@@ -228,36 +144,17 @@ export function isDocumentFile(mimeType: string): boolean {
   return documentTypes.includes(mimeType);
 }
 
-/**
- * Configuration for retry behavior.
- */
 export interface RetryOptions {
-  /** Total attempts including the first one. Default: 3 */
+  
   maxAttempts?: number;
-  /** Starting delay between retries in ms. Default: 1000 */
+  
   baseDelay?: number;
-  /** Maximum delay between retries in ms. Default: 10000 */
+  
   maxDelay?: number;
-  /** Use exponential backoff. Default: true */
+  
   exponentialBackoff?: boolean;
 }
 
-/**
- * Retries an async operation with exponential backoff.
- * 
- * Great for cloud operations that might fail due to network blips
- * or rate limiting.
- * 
- * @example
- * // Retry up to 3 times with increasing delays
- * const result = await withRetry(() => storage.uploadFile(file));
- * 
- * // More aggressive retry strategy
- * const result = await withRetry(() => fetchData(), {
- *   maxAttempts: 5,
- *   baseDelay: 500
- * });
- */
 export async function withRetry<T>(
   operation: () => Promise<T>,
   options: RetryOptions = {}
@@ -290,17 +187,10 @@ export async function withRetry<T>(
   throw lastError || new Error(`Operation failed after ${maxAttempts} attempts`);
 }
 
-/**
- * Returns true if the string is a valid MIME type format (type/subtype).
- */
 export function isValidMimeType(mimeType: string): boolean {
   return /^[a-zA-Z0-9][a-zA-Z0-9!#$&\-^_.+]*\/[a-zA-Z0-9][a-zA-Z0-9!#$&\-^_.+]*$/.test(mimeType);
 }
 
-/**
- * Validates a folder path for use in storage operations.
- * Returns an error message if invalid, null if OK.
- */
 export function validateFolderPath(folder: string): string | null {
   if (hasPathTraversal(folder)) {
     return folder.includes('..')
@@ -319,12 +209,8 @@ export function validateFolderPath(folder: string): string | null {
   return null;
 }
 
-/**
- * Validates a file against upload constraints (size, MIME type, extension).
- * Returns `{ error, code }` on failure, `null` if the file passes all checks.
- */
 export function validateFileForUpload(
-  file: Express.Multer.File,
+  file: StorageFile,
   options: { maxSize?: number; allowedMimeTypes?: string[]; allowedExtensions?: string[] }
 ): { error: string; code: StorageErrorCode } | null {
   if (!file) {
@@ -376,10 +262,6 @@ export function validateFileForUpload(
   return null;
 }
 
-// ---------------------------------------------------------------------------
-// MIME type detection from file content (magic bytes)
-// ---------------------------------------------------------------------------
-
 const MAGIC_SIGNATURES: Array<{ bytes: number[]; mimeType: string; offset?: number }> = [
   { bytes: [0xFF, 0xD8, 0xFF], mimeType: 'image/jpeg' },
   { bytes: [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A], mimeType: 'image/png' },
@@ -402,28 +284,6 @@ const MAGIC_SIGNATURES: Array<{ bytes: number[]; mimeType: string; offset?: numb
   { bytes: [0x7F, 0x45, 0x4C, 0x46], mimeType: 'application/x-executable' },
 ];
 
-/**
- * Detects MIME type from file content by examining magic bytes.
- *
- * Useful in `beforeUpload` hooks to verify that a file's actual content
- * matches its declared MIME type — particularly for cloud uploads where
- * the driver trusts the client-provided MIME type.
- *
- * @param data - Buffer containing at least the first 12 bytes of the file
- * @returns Detected MIME type, or undefined if unknown
- *
- * @example
- * const storage = new StorageManager({
- *   hooks: {
- *     beforeUpload: async (file) => {
- *       const actual = detectMimeType(file.buffer);
- *       if (actual && actual !== file.mimetype) {
- *         throw new Error(`Content mismatch: declared ${file.mimetype}, detected ${actual}`);
- *       }
- *     },
- *   },
- * });
- */
 export function detectMimeType(data: Buffer): string | undefined {
   if (!data || data.length === 0) return undefined;
 
@@ -456,64 +316,36 @@ export function detectMimeType(data: Buffer): string | undefined {
   return undefined;
 }
 
-/**
- * Pauses execution for the specified number of milliseconds.
- */
 export function sleep(ms: number): Promise<void> {
   return new Promise(resolve => globalThis.setTimeout(resolve, ms));
 }
 
-/**
- * Configuration for concurrent execution.
- */
 export interface ConcurrencyOptions {
-  /** Maximum parallel operations. Default: 10 */
+  
   maxConcurrent?: number;
-  /** Pass an AbortSignal to cancel remaining work mid-flight. */
+  
   signal?: AbortSignal | undefined;
 }
 
-/**
- * Processes an array with a concurrency limit.
- * 
- * Prevents overwhelming APIs or running out of resources by limiting
- * how many operations run at once.
- * 
- * Uses a shared-index work-stealing approach: workers pull the next
- * available item as soon as they finish one, ensuring even load
- * distribution regardless of per-item processing time.
- * 
- * @example
- * const results = await withConcurrencyLimit(
- *   files,
- *   (file) => uploadFile(file),
- *   { maxConcurrent: 10 }
- * );
- */
 export async function withConcurrencyLimit<T, R>(
   items: T[],
   operation: (item: T, index: number) => Promise<R>,
   options: ConcurrencyOptions = {}
 ): Promise<R[]> {
   const { maxConcurrent = 10, signal } = options;
-  
   if (items.length === 0) {
     return [];
   }
   
   signal?.throwIfAborted();
-  
   const itemsCopy = [...items];
   const itemCount = itemsCopy.length;
-  
   if (itemCount <= maxConcurrent) {
     return Promise.all(itemsCopy.map((item, index) => operation(item, index)));
   }
-  
   const results: R[] = new Array(itemCount);
   const workerCount = Math.min(maxConcurrent, itemCount);
   let nextIndex = 0;
-  
   const createWorker = async (): Promise<void> => {
     while (nextIndex < itemCount) {
       signal?.throwIfAborted();
@@ -525,12 +357,10 @@ export async function withConcurrencyLimit<T, R>(
       }
     }
   };
-  
   const workers: Promise<void>[] = [];
   for (let i = 0; i < workerCount; i++) {
     workers.push(createWorker());
   }
-  
   await Promise.all(workers);
   return results;
 }

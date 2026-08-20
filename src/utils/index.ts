@@ -1,18 +1,10 @@
-/**
- * express-storage/utils
- * 
- * Standalone utility functions for file handling, retries, and concurrency.
- * 
- * @example
- * import { withRetry, formatFileSize, withConcurrencyLimit } from 'express-storage/utils';
- */
-
 export {
   generateUniqueFileName,
   sanitizeFileName,
   validateFileName,
   hasPathTraversal,
   encodePathSegments,
+  joinStoragePath,
   isValidMimeType,
   validateFolderPath,
   validateFileForUpload,

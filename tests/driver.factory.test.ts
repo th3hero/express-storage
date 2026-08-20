@@ -8,10 +8,6 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { StorageDriverFactory, createDriver, getAvailableDrivers } from '../src/factory/driver.factory.js';
 import type { StorageConfig } from '../src/types/storage.types.js';
 
-// ============================================================================
-// createDriver() — stateless driver creation
-// ============================================================================
-
 describe('createDriver', () => {
   it('should create local driver', () => {
     expect(createDriver({ driver: 'local', localPath: 'test-uploads' })).toBeDefined();
@@ -59,10 +55,6 @@ describe('createDriver', () => {
   });
 });
 
-// ============================================================================
-// getAvailableDrivers()
-// ============================================================================
-
 describe('getAvailableDrivers', () => {
   it('should return all 7 driver types', () => {
     const drivers = getAvailableDrivers();
@@ -80,10 +72,6 @@ describe('getAvailableDrivers', () => {
     expect(StorageDriverFactory.getAvailableDrivers()).toEqual(getAvailableDrivers());
   });
 });
-
-// ============================================================================
-// StorageDriverFactory — instance-based caching
-// ============================================================================
 
 describe('StorageDriverFactory', () => {
   let factory: StorageDriverFactory;

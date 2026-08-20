@@ -1,69 +1,25 @@
 import type { S3Client as S3ClientType } from '@aws-sdk/client-s3';
 import type { Readable } from 'stream';
 import { BaseStorageDriver } from './base.driver.js';
-import { FileUploadResult, PresignedUrlResult, StorageConfig, BlobValidationOptions, BlobValidationResult, ListFilesResult, UploadOptions, FileInfo, DeleteResult } from '../types/storage.types.js';
+import { FileUploadResult, PresignedUrlResult, StorageConfig, BlobValidationOptions, BlobValidationResult, ListFilesResult, UploadOptions, FileInfo, DeleteResult, StorageFile } from '../types/storage.types.js';
 import { encodePathSegments } from '../utils/file.utils.js';
+import { createLazyImport } from '../utils/lazy-import.js';
 
-// Lazy SDK loaders — modules are imported on first use, not at import time.
-// Consumers only need to install the SDKs for the drivers they actually use.
+const loadS3SDK = createLazyImport(
+  () => import('@aws-sdk/client-s3'),
+  '@aws-sdk/client-s3 is required for S3 storage.\nInstall: npm install @aws-sdk/client-s3 @aws-sdk/lib-storage @aws-sdk/s3-request-presigner'
+);
 
-let _s3Mod: Promise<typeof import('@aws-sdk/client-s3')> | undefined;
-function loadS3SDK(): Promise<typeof import('@aws-sdk/client-s3')> {
-  if (!_s3Mod) {
-    _s3Mod = import('@aws-sdk/client-s3').catch(() => {
-      _s3Mod = undefined;
-      throw new Error(
-        '@aws-sdk/client-s3 is required for S3 storage.\n' +
-        'Install: npm install @aws-sdk/client-s3 @aws-sdk/lib-storage @aws-sdk/s3-request-presigner'
-      );
-    });
-  }
-  return _s3Mod;
-}
+const loadS3Upload = createLazyImport(
+  () => import('@aws-sdk/lib-storage'),
+  '@aws-sdk/lib-storage is required for streaming uploads to S3.\nInstall: npm install @aws-sdk/lib-storage'
+);
 
-let _s3UploadMod: Promise<typeof import('@aws-sdk/lib-storage')> | undefined;
-function loadS3Upload(): Promise<typeof import('@aws-sdk/lib-storage')> {
-  if (!_s3UploadMod) {
-    _s3UploadMod = import('@aws-sdk/lib-storage').catch(() => {
-      _s3UploadMod = undefined;
-      throw new Error(
-        '@aws-sdk/lib-storage is required for streaming uploads to S3.\n' +
-        'Install: npm install @aws-sdk/lib-storage'
-      );
-    });
-  }
-  return _s3UploadMod;
-}
+const loadS3Presigner = createLazyImport(
+  () => import('@aws-sdk/s3-request-presigner'),
+  '@aws-sdk/s3-request-presigner is required for presigned URLs.\nInstall: npm install @aws-sdk/s3-request-presigner'
+);
 
-let _s3PresignerMod: Promise<typeof import('@aws-sdk/s3-request-presigner')> | undefined;
-function loadS3Presigner(): Promise<typeof import('@aws-sdk/s3-request-presigner')> {
-  if (!_s3PresignerMod) {
-    _s3PresignerMod = import('@aws-sdk/s3-request-presigner').catch(() => {
-      _s3PresignerMod = undefined;
-      throw new Error(
-        '@aws-sdk/s3-request-presigner is required for presigned URLs.\n' +
-        'Install: npm install @aws-sdk/s3-request-presigner'
-      );
-    });
-  }
-  return _s3PresignerMod;
-}
-
-/**
- * S3StorageDriver - Handles file operations with Amazon S3.
- * 
- * Supports two authentication methods:
- * 1. Explicit credentials (AWS_ACCESS_KEY + AWS_SECRET_KEY)
- * 2. IAM roles (when running on AWS infrastructure)
- * 
- * If you don't provide credentials, the AWS SDK automatically uses
- * IAM roles, environment variables, or the shared credentials file.
- * 
- * When driver is 's3-presigned', upload() returns presigned URLs
- * instead of uploading directly.
- * 
- * Required packages: @aws-sdk/client-s3, @aws-sdk/lib-storage, @aws-sdk/s3-request-presigner
- */
 export class S3StorageDriver extends BaseStorageDriver {
   private _client?: S3ClientType | undefined;
   private readonly bucketName: string;
@@ -107,34 +63,20 @@ export class S3StorageDriver extends BaseStorageDriver {
     this._client = undefined;
   }
 
-  /**
-   * Uploads a file to S3, or returns a presigned URL when in presigned mode.
-   * 
-   * For large files (>100MB), uses streaming multipart upload to reduce
-   * memory usage and improve reliability.
-   */
-  async upload(file: Express.Multer.File, options?: UploadOptions): Promise<FileUploadResult> {
+  async upload(file: StorageFile, options?: UploadOptions): Promise<FileUploadResult> {
     if (this.presignedMode) {
       return this.presignedUpload(file);
     }
-    
-    try {
-      const { errors: validationErrors, resolvedSize } = await this.validateFile(file);
-      if (validationErrors.length > 0) {
-        return this.createErrorResult(validationErrors.join(', '), 'VALIDATION_FAILED');
+
+    return this.executeDirectUpload(file, options, 'S3', async ({ file: uploadFile, key, resolvedSize, options: uploadOptions }) => {
+      if (this.shouldUseStreaming(resolvedSize)) {
+        return this.uploadWithStream(uploadFile, key, resolvedSize, uploadOptions);
       }
 
-      const fileName = this.generateFileName(file.originalname);
-      const fileKey = this.buildFilePath(fileName);
-      
-      if (this.shouldUseStreaming(resolvedSize)) {
-        return await this.uploadWithStream(file, fileKey, resolvedSize, options);
-      }
-      
       const s3 = await loadS3SDK();
       const client = await this.ensureClient();
-      const fileContent = await this.getFileContent(file);
-      
+      const fileContent = await this.getFileContent(uploadFile);
+
       const commandInput: {
         Bucket: string;
         Key: string;
@@ -146,46 +88,39 @@ export class S3StorageDriver extends BaseStorageDriver {
         Metadata?: Record<string, string>;
       } = {
         Bucket: this.bucketName,
-        Key: fileKey,
+        Key: key,
         Body: fileContent,
-        ContentType: options?.contentType || file.mimetype,
+        ContentType: uploadOptions?.contentType || uploadFile.mimetype,
         ContentLength: fileContent.length,
       };
 
-      if (options?.cacheControl) {
-        commandInput.CacheControl = options.cacheControl;
+      if (uploadOptions?.cacheControl) {
+        commandInput.CacheControl = uploadOptions.cacheControl;
       }
-      if (options?.contentDisposition) {
-        commandInput.ContentDisposition = options.contentDisposition;
+      if (uploadOptions?.contentDisposition) {
+        commandInput.ContentDisposition = uploadOptions.contentDisposition;
       }
-      if (options?.metadata) {
-        commandInput.Metadata = options.metadata;
+      if (uploadOptions?.metadata) {
+        commandInput.Metadata = uploadOptions.metadata;
       }
 
       const uploadCommand = new s3.PutObjectCommand(commandInput);
-      await client.send(uploadCommand, options?.signal ? { abortSignal: options.signal } : undefined);
-      
-      const fileUrl = `https://${this.bucketName}.s3.${this.region}.amazonaws.com/${encodePathSegments(fileKey)}`;
-      
-      return this.createSuccessResult(fileKey, fileUrl);
-    } catch (error) {
-      await this.cleanupTempFile(file);
-      return this.createErrorResult(
-        error instanceof Error ? error.message : 'Failed to upload file to S3'
-      );
-    }
+      await client.send(uploadCommand, uploadOptions?.signal ? { abortSignal: uploadOptions.signal } : undefined);
+
+      return this.publicUrl(key);
+    });
   }
 
-  /**
-   * Uploads a large file using streaming multipart upload.
-   * Uses @aws-sdk/lib-storage which handles chunking and concurrency automatically.
-   */
+  private publicUrl(key: string): string {
+    return `https://${this.bucketName}.s3.${this.region}.amazonaws.com/${encodePathSegments(key)}`;
+  }
+
   private async uploadWithStream(
-    file: Express.Multer.File,
+    file: StorageFile,
     fileKey: string,
     fileSize: number,
     options?: UploadOptions
-  ): Promise<FileUploadResult> {
+  ): Promise<string> {
     const s3Upload = await loadS3Upload();
     const client = await this.ensureClient();
     const fileStream = this.getFileStream(file);
@@ -231,21 +166,9 @@ export class S3StorageDriver extends BaseStorageDriver {
     }
 
     await upload.done();
-    
-    const fileUrl = `https://${this.bucketName}.s3.${this.region}.amazonaws.com/${encodePathSegments(fileKey)}`;
-    
-    return this.createSuccessResult(fileKey, fileUrl);
+    return this.publicUrl(fileKey);
   }
 
-  /**
-   * Creates a presigned URL for uploading directly to S3.
-   * 
-   * The URL enforces:
-   * - Exact content type (baked into the signature)
-   * - Exact file size (if provided)
-   * 
-   * Clients that try to upload different content will get a 403.
-   */
   async generateUploadUrl(fileName: string, contentType?: string, fileSize?: number): Promise<PresignedUrlResult> {
     try {
       const decodedFileName = this.decodeFileName(fileName);
@@ -284,9 +207,6 @@ export class S3StorageDriver extends BaseStorageDriver {
     }
   }
 
-  /**
-   * Creates a presigned URL for downloading/viewing a file.
-   */
   async generateViewUrl(fileName: string): Promise<PresignedUrlResult> {
     try {
       const decodedFileName = this.decodeFileName(fileName);
@@ -311,9 +231,6 @@ export class S3StorageDriver extends BaseStorageDriver {
     }
   }
 
-  /**
-   * Deletes a file from S3.
-   */
   async delete(fileName: string): Promise<DeleteResult> {
     try {
       const decodedFileName = this.decodeFileName(fileName);
@@ -349,45 +266,25 @@ export class S3StorageDriver extends BaseStorageDriver {
     }
   }
 
-  /**
-   * Confirms an upload and optionally validates the file.
-   * Uses shared validation logic from BaseStorageDriver.
-   */
+  
   override async validateAndConfirmUpload(
     reference: string,
     options?: BlobValidationOptions
   ): Promise<BlobValidationResult> {
-    try {
+    return this.confirmUploadFromMetadata(reference, options, async () => {
       const s3 = await loadS3SDK();
       const client = await this.ensureClient();
-
       const headResult = await client.send(new s3.HeadObjectCommand({
         Bucket: this.bucketName,
         Key: reference,
       }));
-
-      const actual = {
+      return {
         contentType: headResult.ContentType,
         fileSize: headResult.ContentLength,
       };
-
-      const validationError = await this.checkUploadedFileMetadata(reference, actual, options);
-      if (validationError) return validationError;
-
-      const viewResult = await this.generateViewUrl(reference);
-      return this.buildValidationSuccess(reference, viewResult.success ? viewResult.viewUrl : undefined, actual.contentType, actual.fileSize);
-    } catch (error) {
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'File not found or access denied',
-        code: 'FILE_NOT_FOUND',
-      };
-    }
+    });
   }
 
-  /**
-   * Returns metadata about a file from S3 without downloading it.
-   */
   async getMetadata(reference: string): Promise<FileInfo | null> {
     try {
       const decoded = this.decodeFileName(reference);
@@ -408,9 +305,6 @@ export class S3StorageDriver extends BaseStorageDriver {
     }
   }
 
-  /**
-   * Lists files in the bucket with optional prefix filtering and pagination.
-   */
   async listFiles(
     prefix?: string,
     maxResults: number = 1000,

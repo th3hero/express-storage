@@ -21,13 +21,10 @@ import {
   withRetry,
   sleep,
   withConcurrencyLimit,
+  joinStoragePath,
 } from '../src/utils/file.utils.js';
 import fs from 'fs';
 import path from 'path';
-
-// ============================================================================
-// POSITIVE TEST CASES
-// ============================================================================
 
 describe('File Utilities - Positive Tests', () => {
   describe('generateUniqueFileName', () => {
@@ -157,6 +154,23 @@ describe('File Utilities - Positive Tests', () => {
       
       expect(result).toContain(expectedYear);
       expect(result).toContain(expectedMonth);
+    });
+  });
+
+  describe('joinStoragePath', () => {
+    it('should join folder and filename', () => {
+      expect(joinStoragePath('photo.jpg', 'uploads')).toBe('uploads/photo.jpg');
+    });
+
+    it('should ignore empty, slash-only, and whitespace folders', () => {
+      expect(joinStoragePath('photo.jpg')).toBe('photo.jpg');
+      expect(joinStoragePath('photo.jpg', '')).toBe('photo.jpg');
+      expect(joinStoragePath('photo.jpg', '/')).toBe('photo.jpg');
+      expect(joinStoragePath('photo.jpg', '  /  ')).toBe('photo.jpg');
+    });
+
+    it('should strip leading and trailing slashes', () => {
+      expect(joinStoragePath('photo.jpg', '/uploads/files/')).toBe('uploads/files/photo.jpg');
     });
   });
 
@@ -392,10 +406,6 @@ describe('File Utilities - Positive Tests', () => {
   });
 });
 
-// ============================================================================
-// NEGATIVE TEST CASES
-// ============================================================================
-
 describe('File Utilities - Negative Tests', () => {
   describe('validateFileName', () => {
     it('should reject empty filename', () => {
@@ -537,10 +547,6 @@ describe('File Utilities - Negative Tests', () => {
     });
   });
 });
-
-// ============================================================================
-// EDGE CASE / BOUNDARY TESTS
-// ============================================================================
 
 describe('File Utilities - Edge Cases', () => {
   describe('generateUniqueFileName', () => {
@@ -713,10 +719,6 @@ describe('File Utilities - Edge Cases', () => {
     });
   });
 });
-
-// ============================================================================
-// STRESS / PERFORMANCE TESTS
-// ============================================================================
 
 describe('File Utilities - Stress Tests', () => {
   describe('generateUniqueFileName', () => {

@@ -1,6 +1,6 @@
 # Express Storage
 
-**Express.js file upload middleware for AWS S3, Google Cloud Storage, Azure Blob Storage, and local disk — one unified API, zero vendor lock-in.**
+**Express.js file upload library for AWS S3, Google Cloud Storage, Azure Blob Storage, and local disk — one unified API, zero vendor lock-in.**
 
 Express Storage is a TypeScript-first file upload library for Node.js and Express. Upload files to AWS S3, Google Cloud Storage (GCS), Azure Blob Storage, or local disk using a single API. Switch cloud providers by changing one environment variable — no code changes needed. Built-in presigned URL support, file validation, streaming uploads, and security protection make it a production-ready alternative to multer-s3 that works with every major cloud provider.
 
@@ -34,6 +34,7 @@ Express Storage is a TypeScript-first file upload library for Node.js and Expres
 - [Real-World Examples](#real-world-examples)
 - [Migrating Between Providers](#migrating-between-providers)
 - [Migrating from v2 to v3](#migrating-from-v2-to-v3)
+- [Migrating from v3 to v4](#migrating-from-v3-to-v4)
 - [Why Express Storage over Alternatives?](#why-express-storage-over-alternatives)
 - [TypeScript Support](#typescript-support)
 - [Contributing](#contributing)
@@ -52,7 +53,7 @@ Express Storage is a TypeScript-first file upload library for Node.js and Expres
 - **Lifecycle Hooks** — Tap into upload/delete events for logging, virus scanning, or audit trails.
 - **Batch Operations** — Upload or delete multiple files in parallel with concurrency control and `AbortSignal` support.
 - **Custom Rate Limiting** — Built-in in-memory limiter or plug in your own (Redis, Memcached, etc.).
-- **Lightweight** — Install only the cloud SDK you need. No dependency bloat.
+- **Lightweight** — Zero runtime dependencies. Install only the cloud SDK you need.
 
 ---
 
@@ -62,6 +63,12 @@ Express Storage is a TypeScript-first file upload library for Node.js and Expres
 
 ```bash
 npm install express-storage
+```
+
+If you load settings from a `.env` file, install and configure `dotenv` in your app (this library does not load `.env` for you):
+
+```bash
+npm install dotenv
 ```
 
 Then install only the cloud SDK you need:
@@ -82,13 +89,18 @@ Local storage works out of the box with no additional dependencies.
 ### Basic Setup
 
 ```typescript
+import "dotenv/config"; // load .env into process.env (not done by this library)
 import express from "express";
 import multer from "multer";
 import { StorageManager } from "express-storage";
 
 const app = express();
 const upload = multer();
-const storage = new StorageManager();
+
+// driver defaults to FILE_DRIVER env var, then "local"
+const storage = new StorageManager({
+    credentials: { localPath: "uploads" },
+});
 
 app.post("/upload", upload.single("file"), async (req, res) => {
     const result = await storage.uploadFile(req.file, {
@@ -105,6 +117,8 @@ app.post("/upload", upload.single("file"), async (req, res) => {
 ```
 
 ### Environment Configuration
+
+This package reads `process.env` but does **not** load `.env` files. Load them in your app first (`dotenv.config()`, or your framework's env loader), then construct `StorageManager`.
 
 Create a `.env` file:
 
@@ -317,7 +331,7 @@ For files that must go through your server, Express Storage automatically uses s
 - **GCS**: Uses resumable uploads with streaming
 - **Azure**: Uses block upload with streaming
 
-This happens transparently — you don't need to change your code.
+This happens after Multer has already accepted the file. Use `multer.diskStorage()` (not memory storage) for large direct uploads so Node does not buffer the whole file in RAM. The default `maxFileSize` is 5GB — that is a storage cap, not a safe in-memory size.
 
 ### Recommended Approach for Large Files
 
@@ -590,7 +604,7 @@ const storage = new StorageManager({ driver: "s3", rateLimiter: { maxRequests: 1
 
 // ... use storage ...
 
-// Release resources (clears factory cache entry and rate limiter)
+// Release resources (destroys the driver instance and clears the rate limiter)
 storage.destroy();
 ```
 
@@ -600,7 +614,7 @@ This is especially useful in tests, serverless functions, or any environment whe
 
 ## Custom Rate Limiting
 
-The built-in rate limiter works for single-process apps. For clustered deployments, provide your own adapter:
+The built-in rate limiter works for single-process apps and applies only to presigned URL generation (`generateUploadUrl` / `generateViewUrl` and the batch variants). For clustered deployments, provide your own adapter:
 
 ```typescript
 import { StorageManager, RateLimiterAdapter } from "express-storage";
@@ -658,12 +672,16 @@ import {
     isDocumentFile,
     getFileExtension,
     formatFileSize,
+    detectMimeType,
+    joinStoragePath,
 } from "express-storage/utils";
 
 isImageFile("image/jpeg"); // true
 isDocumentFile("application/pdf"); // true
 getFileExtension("photo.jpg"); // '.jpg'
 formatFileSize(1048576); // '1 MB'
+detectMimeType(file.buffer); // magic-byte MIME sniffing
+joinStoragePath("photo.jpg", "uploads/users"); // 'uploads/users/photo.jpg'
 ```
 
 ### Custom Logging
@@ -890,6 +908,52 @@ If you forget to install a required SDK, you'll get a clear error message tellin
 
 ---
 
+## Migrating from v3 to v4
+
+v4 focuses on library hygiene, performance, and fixing incomplete local metadata behavior. Most apps need only a small env-loading change.
+
+### What Changed
+
+1. **No automatic `.env` loading.** The library reads `process.env` only. Call `dotenv.config()` (or `import "dotenv/config"`) in your application entry file before constructing `StorageManager`.
+2. **Removed `initializeDotenv` and `resetDotenvInitialization`** from `express-storage/config`. They are no longer exported.
+3. **`StorageOptions.driver` is optional.** Defaults to `FILE_DRIVER` or `local`.
+4. **`StorageFile` type exported.** Upload methods accept any object compatible with Multer's file shape — Express types are no longer required.
+5. **Lazy driver loading.** `StorageManager` imports only the driver you configure (faster cold start for local-only apps).
+6. **Local metadata sidecar fixed.** `.meta.json` files are returned by `getMetadata()`, deleted with the file, and hidden from `listFiles()`.
+7. **`HookErrorContext.operation` narrowed** to upload/delete operations that actually invoke hooks.
+
+### Migration Steps
+
+1. Update the package:
+
+```bash
+npm install express-storage@4
+```
+
+2. Load environment variables in your app (if you use `.env`):
+
+```typescript
+import "dotenv/config"; // add this once, before StorageManager
+import { StorageManager } from "express-storage";
+
+const storage = new StorageManager(); // driver optional when FILE_DRIVER is set
+```
+
+3. Remove any imports of removed config helpers:
+
+```typescript
+// Before (v3)
+import { initializeDotenv } from "express-storage/config";
+initializeDotenv();
+
+// After (v4) — handle in your app instead
+import "dotenv/config";
+```
+
+4. No changes needed if you already called `dotenv.config()` yourself and never used `initializeDotenv`.
+
+---
+
 ## Why Express Storage over Alternatives?
 
 If you're evaluating file upload libraries for Express.js, here's how Express Storage compares:
@@ -929,6 +993,7 @@ import {
     StorageOptions,
     FileValidationOptions,
     UploadOptions,
+    StorageFile,
 } from "express-storage";
 
 // Utilities — standalone helpers (import separately to keep your bundle small)

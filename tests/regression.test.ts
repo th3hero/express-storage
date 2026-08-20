@@ -12,7 +12,6 @@ import { StorageManager } from '../src/storage-manager.js';
 import { StorageDriverFactory } from '../src/factory/driver.factory.js';
 import { LocalStorageDriver } from '../src/drivers/local.driver.js';
 import type { StorageConfig } from '../src/types/storage.types.js';
-import { resetDotenvInitialization } from '../src/utils/config.utils.js';
 import {
   generateUniqueFileName,
   sanitizeFileName,
@@ -29,14 +28,8 @@ import {
 
 const TEST_DIR = path.join(process.cwd(), 'test-regression');
 
-// ============================================================================
-// SETUP & TEARDOWN
-// ============================================================================
-
 describe('Regression Tests', () => {
   beforeEach(() => {
-    resetDotenvInitialization();
-    
     if (fs.existsSync(TEST_DIR)) {
       fs.rmSync(TEST_DIR, { recursive: true, force: true });
     }
@@ -47,10 +40,6 @@ describe('Regression Tests', () => {
       fs.rmSync(TEST_DIR, { recursive: true, force: true });
     }
   });
-
-  // ============================================================================
-  // BOUNDARY CONDITION TESTS
-  // ============================================================================
 
   describe('Boundary Conditions', () => {
     describe('File Size Boundaries', () => {
@@ -247,10 +236,6 @@ describe('Regression Tests', () => {
     });
   });
 
-  // ============================================================================
-  // EDGE CASE TESTS
-  // ============================================================================
-
   describe('Edge Cases', () => {
     describe('Empty Input Handling', () => {
       let storage: StorageManager;
@@ -416,10 +401,6 @@ describe('Regression Tests', () => {
     });
   });
 
-  // ============================================================================
-  // FORMAT FILE SIZE EDGE CASES
-  // ============================================================================
-
   describe('formatFileSize Edge Cases', () => {
     it('should handle 0 bytes', () => {
       expect(formatFileSize(0)).toBe('0 Bytes');
@@ -462,10 +443,6 @@ describe('Regression Tests', () => {
       expect(result).toMatch(/^\d+\.\d{1,2} MB$/);
     });
   });
-
-  // ============================================================================
-  // RETRY LOGIC REGRESSION TESTS
-  // ============================================================================
 
   describe('withRetry Regression Tests', () => {
     it('should not retry on immediate success', async () => {
@@ -526,10 +503,6 @@ describe('Regression Tests', () => {
     });
   });
 
-  // ============================================================================
-  // CONCURRENCY LIMIT REGRESSION TESTS
-  // ============================================================================
-
   describe('withConcurrencyLimit Regression Tests', () => {
     it('should maintain result order with varying delays', async () => {
       const delays = [100, 10, 50, 5, 75];
@@ -589,10 +562,6 @@ describe('Regression Tests', () => {
     });
   });
 
-  // ============================================================================
-  // DRIVER FACTORY REGRESSION TESTS
-  // ============================================================================
-
   describe('Driver Factory Regression Tests', () => {
     it('should handle rapid cache operations', () => {
       const factory = new StorageDriverFactory();
@@ -628,10 +597,6 @@ describe('Regression Tests', () => {
       expect(drivers.every(d => d === first)).toBe(true);
     });
   });
-
-  // ============================================================================
-  // STORAGE MANAGER CONFIG REGRESSION TESTS
-  // ============================================================================
 
   describe('StorageManager Config Regression Tests', () => {
     it('should reject 0 for presignedUrlExpiry during validation', () => {
@@ -693,10 +658,6 @@ describe('Regression Tests', () => {
     });
   });
 
-  // ============================================================================
-  // UPLOAD WITH OPTIONS REGRESSION TESTS
-  // ============================================================================
-
   describe('Upload Options Regression Tests', () => {
     let storage: StorageManager;
 
@@ -753,10 +714,6 @@ describe('Regression Tests', () => {
     });
   });
 
-  // -------------------------------------------------------------------------
-  // Magic byte detection fixes
-  // -------------------------------------------------------------------------
-
   describe('RIFF container sub-format detection', () => {
     it('should detect WebP from RIFF container (not false-positive WAV)', () => {
       // RIFF + size + WEBP
@@ -796,10 +753,6 @@ describe('Regression Tests', () => {
     });
   });
 
-  // -------------------------------------------------------------------------
-  // Input mutation fix
-  // -------------------------------------------------------------------------
-
   describe('upload must not mutate the input file object', () => {
     it('should not modify file.size during upload', async () => {
       const sm = new StorageManager({
@@ -815,10 +768,6 @@ describe('Regression Tests', () => {
       sm.destroy();
     });
   });
-
-  // -------------------------------------------------------------------------
-  // Factory clearCache destroys drivers
-  // -------------------------------------------------------------------------
 
   describe('StorageDriverFactory resource cleanup', () => {
     it('clearCache should call destroy on all cached drivers', () => {
@@ -847,10 +796,6 @@ describe('Regression Tests', () => {
     });
   });
 
-  // -------------------------------------------------------------------------
-  // withConcurrencyLimit work-stealing
-  // -------------------------------------------------------------------------
-
   describe('withConcurrencyLimit load balancing', () => {
     it('should distribute slow items across workers evenly', async () => {
       const workerLog: number[] = [];
@@ -871,10 +816,6 @@ describe('Regression Tests', () => {
       expect(workerLog.sort()).toEqual([0, 1, 2, 3, 4, 5, 6, 7]);
     });
   });
-
-  // -------------------------------------------------------------------------
-  // exists() convenience method
-  // -------------------------------------------------------------------------
 
   describe('exists() method', () => {
     let sm: StorageManager;

@@ -22,15 +22,13 @@ import {
   Logger,
   RateLimiterAdapter,
   StorageHooks,
-  HookErrorContext
+  HookErrorContext,
+  StorageFile
 } from './types/storage.types.js';
-import { createDriver, getAvailableDrivers } from './factory/driver.factory.js';
+import { STORAGE_DRIVERS, DEFAULT_MAX_FILE_SIZE, DEFAULT_PRESIGNED_URL_EXPIRY, DEFAULT_CONCURRENCY, DEFAULT_LOCAL_PATH } from './constants.js';
 import { validateStorageConfig, loadEnvironmentConfig, environmentToStorageConfig } from './utils/config.utils.js';
-import { generateUniqueFileName, validateFileName, hasPathTraversal, isValidMimeType, validateFolderPath, validateFileForUpload, withConcurrencyLimit, formatFileSize } from './utils/file.utils.js';
+import { generateUniqueFileName, validateFileName, hasPathTraversal, isValidMimeType, validateFolderPath, validateFileForUpload, withConcurrencyLimit, formatFileSize, joinStoragePath } from './utils/file.utils.js';
 import { InMemoryRateLimiter, isRateLimiterAdapter } from './utils/rate-limiter.js';
-
-/** 5 GB — default maximum file size */
-const DEFAULT_MAX_FILE_SIZE = 5 * 1024 * 1024 * 1024;
 
 const noopLogger: Logger = {
   debug: () => {},
@@ -39,31 +37,8 @@ const noopLogger: Logger = {
   error: () => {},
 };
 
-/**
- * StorageManager - Your single point of contact for all file operations.
- * 
- * Think of it as a universal remote that works with any storage provider.
- * You don't need to know the specifics of S3, GCS, Azure, or local storage —
- * just tell StorageManager what you want to do and it handles the rest.
- * 
- * @example
- * // The simplest setup - just reads from your .env file
- * const storage = new StorageManager();
- * 
- * // Full-featured setup
- * const storage = new StorageManager({
- *   driver: 's3',
- *   credentials: { bucketName: 'my-bucket', awsRegion: 'us-east-1' },
- *   hooks: {
- *     beforeUpload: async (file) => { await virusScan(file.buffer); },
- *     afterUpload: (result) => { auditLog('file_uploaded', result); },
- *   },
- *   rateLimiter: { maxRequests: 100, windowMs: 60000 },
- *   concurrency: 5,
- * });
- */
 export class StorageManager {
-  private driver: IStorageDriver;
+  private driverPromise: Promise<IStorageDriver> | undefined;
   private readonly config: StorageConfig;
   private readonly logger: Logger;
   private rateLimiter: RateLimiterAdapter | null = null;
@@ -75,23 +50,15 @@ export class StorageManager {
     this.logger = options?.logger || noopLogger;
     this.config = this.buildConfig(options);
     this.hooks = options?.hooks || {};
-    this.concurrency = options?.concurrency ?? 10;
+    this.concurrency = options?.concurrency ?? DEFAULT_CONCURRENCY;
     
-    // Initialize rate limiter — accepts either plain options or a custom adapter
     if (options?.rateLimiter) {
       if (isRateLimiterAdapter(options.rateLimiter)) {
         this.rateLimiter = options.rateLimiter;
-        this.logger.debug('Custom rate limiter adapter configured');
       } else {
         this.rateLimiter = new InMemoryRateLimiter(options.rateLimiter);
-        this.logger.debug('In-memory rate limiting enabled', { 
-          maxRequests: options.rateLimiter.maxRequests,
-          windowMs: options.rateLimiter.windowMs || 60000
-        });
       }
     }
-    
-    this.logger.debug('StorageManager initializing', { driver: this.config.driver });
     
     const validation = validateStorageConfig(this.config);
     if (!validation.isValid) {
@@ -99,14 +66,13 @@ export class StorageManager {
       throw new Error(`Configuration validation failed: ${validation.errors.join(', ')}`);
     }
     
-    this.driver = createDriver(this.config);
+    this.driverPromise = this.instantiateDriver(this.config);
+    void this.driverPromise.catch((error) => {
+      this.logger.error('Driver initialization failed', { error });
+    });
     this.logger.info('StorageManager initialized', { driver: this.config.driver });
   }
 
-  /**
-   * Builds the final configuration by merging environment variables with any
-   * options you passed in. Your explicit options always win over env vars.
-   */
   private buildConfig(options?: StorageOptions): StorageConfig {
     const envConfig = loadEnvironmentConfig();
     const baseConfig = environmentToStorageConfig(envConfig);
@@ -114,7 +80,7 @@ export class StorageManager {
     if (!options) {
       return {
         ...baseConfig,
-        driver: baseConfig.driver ?? 'local',
+        driver: baseConfig.driver || 'local',
         maxFileSize: baseConfig.maxFileSize ?? DEFAULT_MAX_FILE_SIZE,
       };
     }
@@ -122,11 +88,11 @@ export class StorageManager {
     const creds = options.credentials || {};
     
     return {
-      driver: options.driver ?? baseConfig.driver ?? 'local',
+      driver: options.driver || baseConfig.driver || 'local',
       bucketName: creds.bucketName ?? baseConfig.bucketName,
       bucketPath: creds.bucketPath ?? baseConfig.bucketPath ?? '',
-      localPath: creds.localPath ?? baseConfig.localPath ?? 'public/express-storage',
-      presignedUrlExpiry: creds.presignedUrlExpiry ?? baseConfig.presignedUrlExpiry ?? 600,
+      localPath: creds.localPath ?? baseConfig.localPath ?? DEFAULT_LOCAL_PATH,
+      presignedUrlExpiry: creds.presignedUrlExpiry ?? baseConfig.presignedUrlExpiry ?? DEFAULT_PRESIGNED_URL_EXPIRY,
       maxFileSize: creds.maxFileSize ?? baseConfig.maxFileSize ?? DEFAULT_MAX_FILE_SIZE,
       
       awsRegion: creds.awsRegion ?? baseConfig.awsRegion,
@@ -143,34 +109,48 @@ export class StorageManager {
     };
   }
 
+  private async getDriver(): Promise<IStorageDriver> {
+    this.assertNotDestroyed();
+    if (!this.driverPromise) {
+      this.driverPromise = this.instantiateDriver(this.config);
+    }
+    return this.driverPromise;
+  }
+
+  private async instantiateDriver(config: StorageConfig): Promise<IStorageDriver> {
+    switch (config.driver) {
+      case 'local': {
+        const { LocalStorageDriver } = await import('./drivers/local.driver.js');
+        return new LocalStorageDriver(config);
+      }
+      case 's3':
+      case 's3-presigned': {
+        const { S3StorageDriver } = await import('./drivers/s3.driver.js');
+        return new S3StorageDriver(config);
+      }
+      case 'gcs':
+      case 'gcs-presigned': {
+        const { GCSStorageDriver } = await import('./drivers/gcs.driver.js');
+        return new GCSStorageDriver(config);
+      }
+      case 'azure':
+      case 'azure-presigned': {
+        const { AzureStorageDriver } = await import('./drivers/azure.driver.js');
+        return new AzureStorageDriver(config);
+      }
+      default:
+        throw new Error(`Unsupported storage driver: ${config.driver}`);
+    }
+  }
+
   private assertNotDestroyed(): void {
     if (this.destroyed) {
       throw new Error('StorageManager has been destroyed and cannot be reused. Create a new instance.');
     }
   }
 
-  // ---------------------------------------------------------------------------
-  // Upload methods
-  // ---------------------------------------------------------------------------
-
-  /**
-   * Uploads a single file to your configured storage.
-   * 
-   * @param file - The file from Multer (req.file)
-   * @param validation - Optional rules like max size and allowed types
-   * @param uploadOptions - Optional metadata, cache headers, etc.
-   * 
-   * @example
-   * const result = await storage.uploadFile(req.file, {
-   *   maxSize: 5 * 1024 * 1024,
-   *   allowedMimeTypes: ['image/jpeg', 'image/png'],
-   * });
-   * if (result.success) {
-   *   console.log(result.reference, result.fileUrl);
-   * }
-   */
   async uploadFile(
-    file: Express.Multer.File, 
+    file: StorageFile, 
     validation?: FileValidationOptions,
     uploadOptions?: UploadOptions
   ): Promise<FileUploadResult> {
@@ -180,29 +160,11 @@ export class StorageManager {
       return { success: false, error: 'No file provided', code: 'NO_FILE' };
     }
 
-    this.logger.debug('uploadFile called', { 
-      originalName: file.originalname, 
-      size: file.size, 
-      mimeType: file.mimetype 
-    });
-
     return this.executeSingleUpload(file, validation, uploadOptions, 'upload');
   }
 
-  /**
-   * Uploads multiple files at once.
-   * Files are processed in parallel (up to concurrency limit) for speed,
-   * but each file gets its own result — one failure doesn't stop the others.
-   * 
-   * @example
-   * const results = await storage.uploadFiles(req.files, {
-   *   maxSize: 10 * 1024 * 1024,
-   * });
-   * const uploaded = results.filter(r => r.success);
-   * const failed = results.filter(r => !r.success);
-   */
   async uploadFiles(
-    files: Express.Multer.File[], 
+    files: StorageFile[], 
     validation?: FileValidationOptions,
     uploadOptions?: UploadOptions,
     options?: BatchOptions
@@ -219,28 +181,6 @@ export class StorageManager {
     );
   }
 
-  // ---------------------------------------------------------------------------
-  // Presigned URL methods
-  // ---------------------------------------------------------------------------
-
-  /**
-   * Creates a presigned URL that lets clients upload directly to cloud storage.
-   * 
-   * The URL is time-limited and (for S3/GCS) locked to specific file constraints.
-   * 
-   * @param fileName - What the user wants to call their file
-   * @param contentType - The MIME type (e.g., 'image/jpeg')
-   * @param fileSize - Exact size in bytes (enforced by S3/GCS, advisory for Azure)
-   * @param folder - Where to put the file (overrides your default BUCKET_PATH)
-   * 
-   * @example
-   * const result = await storage.generateUploadUrl('photo.jpg', 'image/jpeg', 204800);
-   * if (result.success) {
-   *   // result.uploadUrl  — PUT request goes here
-   *   // result.reference  — save this to confirm/view/delete later
-   *   // result.expiresIn  — seconds until URL expires
-   * }
-   */
   async generateUploadUrl(
     fileName: string, 
     contentType?: string, 
@@ -291,8 +231,9 @@ export class StorageManager {
       }
     }
     
-    const reference = this.buildFilePath(uniqueFileName, effectiveFolder);
-    const result = await this.driver.generateUploadUrl(reference, contentType, fileSize);
+    const reference = joinStoragePath(uniqueFileName, effectiveFolder);
+    const driver = await this.getDriver();
+    const result = await driver.generateUploadUrl(reference, contentType, fileSize);
     
     if (result.success) {
       const response: PresignedUploadUrlSuccess = {
@@ -300,7 +241,7 @@ export class StorageManager {
         fileName: uniqueFileName,
         reference,
         uploadUrl: result.uploadUrl ?? '',
-        expiresIn: this.config.presignedUrlExpiry || 600,
+        expiresIn: this.config.presignedUrlExpiry || DEFAULT_PRESIGNED_URL_EXPIRY,
       };
       
       if (effectiveFolder) {
@@ -321,11 +262,6 @@ export class StorageManager {
     return result;
   }
 
-  /**
-   * Creates a presigned URL for viewing/downloading an existing file.
-   * 
-   * @param reference - The full path you got from generateUploadUrl
-   */
   async generateViewUrl(reference: string): Promise<PresignedViewUrlResult> {
     this.assertNotDestroyed();
     const rateLimitError = await this.checkRateLimit();
@@ -339,14 +275,15 @@ export class StorageManager {
       };
     }
     
-    const result = await this.driver.generateViewUrl(reference);
+    const driver = await this.getDriver();
+    const result = await driver.generateViewUrl(reference);
     
     if (result.success) {
       const response: PresignedViewUrlSuccess = {
         success: true,
         reference,
         viewUrl: result.viewUrl ?? '',
-        expiresIn: this.config.presignedUrlExpiry || 600,
+        expiresIn: this.config.presignedUrlExpiry || DEFAULT_PRESIGNED_URL_EXPIRY,
       };
       return response;
     }
@@ -354,13 +291,6 @@ export class StorageManager {
     return result;
   }
 
-  /**
-   * Verifies that a presigned upload actually happened and the file is valid.
-   * 
-   * For Azure, this is essential — Azure doesn't enforce file constraints at
-   * the URL level, so we check the actual blob properties here.
-   * For S3/GCS, this confirms the file exists and optionally validates it.
-   */
   async validateAndConfirmUpload(
     reference: string,
     options?: BlobValidationOptions
@@ -374,20 +304,15 @@ export class StorageManager {
       };
     }
     
-    return this.driver.validateAndConfirmUpload(reference, options);
+    const driver = await this.getDriver();
+    return driver.validateAndConfirmUpload(reference, options);
   }
 
-  /**
-   * Returns true if you're using Azure presigned mode.
-   * Your hint that you MUST call validateAndConfirmUpload() after presigned uploads.
-   */
+  
   requiresPostUploadValidation(): boolean {
     return this.config.driver === 'azure-presigned';
   }
 
-  /**
-   * Creates presigned upload URLs for multiple files at once.
-   */
   async generateUploadUrls(
     files: (string | FileMetadata)[],
     folder?: string,
@@ -442,9 +367,6 @@ export class StorageManager {
     );
   }
 
-  /**
-   * Creates presigned view URLs for multiple files at once.
-   */
   async generateViewUrls(
     references: string[],
     options?: BatchOptions
@@ -470,31 +392,11 @@ export class StorageManager {
     );
   }
 
-  // ---------------------------------------------------------------------------
-  // Delete methods
-  // ---------------------------------------------------------------------------
-
-  /**
-   * Deletes a single file from storage.
-   * 
-   * @param reference - The full path from uploadFile result or generateUploadUrl
-   * @returns DeleteResult with success status and error details on failure
-   * 
-   * @example
-   * const result = await storage.deleteFile(uploadResult.reference);
-   * if (!result.success) {
-   *   console.log(result.error, result.code); // e.g., 'FILE_NOT_FOUND'
-   * }
-   */
   async deleteFile(reference: string): Promise<DeleteResult> {
     this.assertNotDestroyed();
-    this.logger.debug('deleteFile called', { reference });
     return this.executeSingleDelete(reference, 'delete');
   }
 
-  /**
-   * Deletes multiple files at once.
-   */
   async deleteFiles(references: string[], options?: BatchOptions): Promise<DeleteResult[]> {
     this.assertNotDestroyed();
     if (!references || references.length === 0) {
@@ -508,17 +410,6 @@ export class StorageManager {
     );
   }
 
-  // ---------------------------------------------------------------------------
-  // List files
-  // ---------------------------------------------------------------------------
-
-  /**
-   * Lists files in your storage with optional filtering and pagination.
-   * 
-   * @param prefix - Only show files starting with this path
-   * @param maxResults - How many files to return per page (default: 1000)
-   * @param continuationToken - Pass nextToken from previous response for next page
-   */
   async listFiles(
     prefix?: string,
     maxResults?: number,
@@ -533,51 +424,25 @@ export class StorageManager {
       };
     }
     
-    return this.driver.listFiles(prefix, maxResults, continuationToken);
+    const driver = await this.getDriver();
+    return driver.listFiles(prefix, maxResults, continuationToken);
   }
 
-  // ---------------------------------------------------------------------------
-  // File metadata
-  // ---------------------------------------------------------------------------
-
-  /**
-   * Returns metadata about a file without downloading it.
-   * 
-   * @param reference - The full path from uploadFile result or generateUploadUrl
-   * @returns FileInfo with name, size, contentType, lastModified — or null if not found
-   * 
-   * @example
-   * const info = await storage.getMetadata(uploadResult.reference);
-   * if (info) {
-   *   console.log(`${info.name}: ${info.size} bytes, ${info.contentType}`);
-   * }
-   */
   async getMetadata(reference: string): Promise<FileInfo | null> {
     this.assertNotDestroyed();
     if (hasPathTraversal(reference)) {
       return null;
     }
-    return this.driver.getMetadata(reference);
+    const driver = await this.getDriver();
+    return driver.getMetadata(reference);
   }
 
-  /**
-   * Returns true if a file exists at the given reference.
-   * 
-   * @param reference - The full path from uploadFile result or generateUploadUrl
-   */
   async exists(reference: string): Promise<boolean> {
     const metadata = await this.getMetadata(reference);
     return metadata !== null;
   }
 
-  // ---------------------------------------------------------------------------
-  // Configuration accessors
-  // ---------------------------------------------------------------------------
-
-  /**
-   * Returns a copy of the current configuration without credentials.
-   * Safe to log, expose in admin panels, or include in error reports.
-   */
+  
   getConfig(): PublicStorageConfig {
     return {
       driver: this.config.driver,
@@ -597,18 +462,11 @@ export class StorageManager {
     return this.config.driver;
   }
 
-  /**
-   * Returns true if the driver operates in presigned mode.
-   * In presigned mode, upload() returns URLs instead of uploading directly.
-   */
+  
   isPresignedUploadMode(): boolean {
     return this.config.driver.includes('-presigned');
   }
 
-  /**
-   * Returns rate limit status information.
-   * Returns null if rate limiting is not configured.
-   */
   async getRateLimitStatus(): Promise<{ remainingRequests: number; resetTimeMs: number } | null> {
     this.assertNotDestroyed();
     if (!this.rateLimiter) {
@@ -621,23 +479,16 @@ export class StorageManager {
   }
 
   static getAvailableDrivers(): StorageDriver[] {
-    return getAvailableDrivers() as StorageDriver[];
+    return [...STORAGE_DRIVERS];
   }
 
-  /**
-   * Releases resources held by this StorageManager instance.
-   * Clears the rate limiter and hooks. The instance should not be reused
-   * after calling this method.
-   * 
-   * @example
-   * const storage = new StorageManager({ driver: 's3' });
-   * // ... use storage ...
-   * storage.destroy(); // free resources
-   */
+  
   destroy(): void {
     if (this.destroyed) return;
     this.destroyed = true;
-    this.driver.destroy();
+    const pending = this.driverPromise;
+    this.driverPromise = undefined;
+    void pending?.then((driver) => { driver.destroy(); }).catch(() => {});
     this.rateLimiter = null;
     this.hooks = {};
     this.logger.info('StorageManager destroyed');
@@ -647,16 +498,8 @@ export class StorageManager {
     return this.destroyed;
   }
 
-  // ---------------------------------------------------------------------------
-  // Private helpers
-  // ---------------------------------------------------------------------------
-
-  /**
-   * Shared upload orchestration: validation → beforeUpload hook → driver.upload → afterUpload hook.
-   * Used by both uploadFile() and uploadFiles() to eliminate duplication.
-   */
   private async executeSingleUpload(
-    file: Express.Multer.File,
+    file: StorageFile,
     validation: FileValidationOptions | undefined,
     uploadOptions: UploadOptions | undefined,
     operation: 'upload' | 'uploadMultiple'
@@ -691,7 +534,8 @@ export class StorageManager {
 
     let result: FileUploadResult;
     try {
-      result = await this.driver.upload(file, uploadOptions);
+      const driver = await this.getDriver();
+      result = await driver.upload(file, uploadOptions);
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : 'Failed to upload file';
       result = {
@@ -717,10 +561,6 @@ export class StorageManager {
     return result;
   }
 
-  /**
-   * Shared delete orchestration: path check → beforeDelete hook → driver.delete → afterDelete hook.
-   * Used by both deleteFile() and deleteFiles() to eliminate duplication.
-   */
   private async executeSingleDelete(reference: string, operation: 'delete' | 'deleteMultiple'): Promise<DeleteResult> {
     if (hasPathTraversal(reference)) {
       this.logger.warn('delete rejected: path traversal attempt', { reference });
@@ -737,7 +577,8 @@ export class StorageManager {
 
     let result: DeleteResult;
     try {
-      result = await this.driver.delete(reference);
+      const driver = await this.getDriver();
+      result = await driver.delete(reference);
     } catch (error) {
       result = { success: false, reference, error: error instanceof Error ? error.message : 'Failed to delete file', code: 'PROVIDER_ERROR' };
     }
@@ -774,23 +615,6 @@ export class StorageManager {
     return null;
   }
 
-  private buildFilePath(fileName: string, folder?: string): string {
-    if (!folder) {
-      return fileName;
-    }
-    
-    const normalizedFolder = folder.replace(/^\/+|\/+$/g, '');
-    if (!normalizedFolder) {
-      return fileName;
-    }
-    
-    return `${normalizedFolder}/${fileName}`;
-  }
-
-  /**
-   * Safely invokes the onError hook. Swallows hook exceptions to prevent
-   * error-in-error-handler cascades.
-   */
   private async invokeOnError(error: Error, context: HookErrorContext): Promise<void> {
     try {
       await this.hooks.onError?.(error, context);
